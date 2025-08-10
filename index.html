@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Momentum Screener — ROC[-3] / Avg ROC[-3,-2]</title>
+  <style>
+    :root{--bg:#071827;--card:#0b2430;--muted:#9fb6c7;--accent:#7be3c7;--danger:#ff9a9a}
+    body{margin:0;font-family:Inter,Arial,Helvetica,sans-serif;background:linear-gradient(180deg,#021119 0%,#051521 100%);color:#e6f3f6;padding:12px}
+    header{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px}
+    h1{font-size:18px;margin:0}
+    .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    select,button{padding:8px;border-radius:8px;border:1px solid #12333d;background:var(--card);color:inherit}
+    button{cursor:pointer}
+    #status{font-size:13px;color:var(--muted)}
+    main{margin-top:12px}
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    th,td{text-align:left;padding:10px;border-bottom:1px solid rgba(255,255,255,0.04)}
+    th{color:var(--muted);font-size:12px}
+    tr.match{background:linear-gradient(90deg, rgba(11,36,48,0.8), rgba(6,28,36,0.6));border-radius:6px}
+    .small{font-size:12px;color:var(--muted)}
+    .green{color:#7be3c7}
+    .red{color:#ff9a9a}
+    @media(max-width:640px){ th,td{padding:8px;font-size:12px} h1{font-size:16px} }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Momentum Screener (1H) — ROC[-3] &amp; Avg(ROC[-3],ROC[-2])</h1>
+      <div class="small">Scans top 200 perpetual USDT pairs. Pattern + MACD distance increasing (last 3).</div>
+    </div>
+
+    <div class="controls">
+      <label class="small">Sort:
+        <select id="sortOpt">
+          <option value="roc3_desc">ROC[-3] ↓ (default)</option>
+          <option value="roc3_asc">ROC[-3] ↑</option>
+          <option value="avg_desc">Avg(ROC[-3],ROC[-2]) ↓</option>
+          <option value="avg_asc">Avg(ROC[-3],ROC[-2]) ↑</option>
+          <option value="prev_desc">Prev Δ% ↓</option>
+          <option value="prev_asc">Prev Δ% ↑</option>
+          <option value="curr_desc">Curr Δ% ↓</option>
+          <option value="curr_asc">Curr Δ% ↑</option>
+        </select>
+      </label>
+
+      <button id="refreshBtn">Refresh</button>
+      <div id="status">Ready</div>
+    </div>
+  </header>
+
+  <main>
+    <table aria-live="polite">
+      <thead>
+        <tr>
+          <th>Symbol</th>
+          <th>ROC[-3] %</th>
+          <th>Avg(ROC[-3],ROC[-2]) %</th>
+          <th>Prev Δ %</th>
+          <th>Curr Δ %</th>
+          <th class="small">Note</th>
+        </tr>
+      </thead>
+      <tbody id="resultsBody">
+        <tr><td colspan="6" class="small">Click Refresh to scan — progress will appear above and matches will show live.</td></tr>
+      </tbody>
+    </table>
+  </main>
+
+<script>
+/* Momentum screener single-file
+   - LIMIT = 40 candles
+   - Uses top 200 perpetual USDT symbols (excludes large caps)
+   - ROC definition: per-candle percent change = (close - prev_close) / prev_close * 100
+   - We compute ROC for last 6 candles; sorting uses ROC[-3] or avg(ROC[-3],ROC[-2])
+   - Conditions:
+     * candle[-3] and candle[-2] same color (green/red; doji ignored)
+     * candle[-1] and candle[-2] different color
+     * MACD distance (abs(macd - signal)) increasing across last 3 candles:
+         dist[-3] < dist[-2] < dist[-1]
+*/
+
+const LIMIT = 40;
+const INTERVAL = '1h';
+const MAX_SYMBOLS = 200;
+const EXCLUDE = ["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","TONUSDT","AVAXUSDT","DOTUSDT","TRXUSDT","SHIBUSDT","LINKUSDT","NEARUSDT","MATICUSDT","LTCUSDT","UNIUSDT","BCHUSDT","ICPUSDT","LEOUSDT"];
+
+const statusEl = document.getElementById('status');
+const resultsBody = document.getElementById('resultsBody');
+const refreshBtn = document.getElementById('refreshBtn');
+const sortOpt = document.getElementById('sortOpt');
+
+let matches = [];
+
+refreshBtn.addEventListener('click', () => handleRefresh());
+sortOpt.addEventListener('change', () => renderMatches());
+
+async function fetchPerpetualSymbols() {
+  const url = 'https://fapi.binance.com/fapi/v1/exchangeInfo';
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('exchangeInfo failed');
+  const data = await res.json();
+  return data.symbols
+    .filter(s => s.contractType === 'PERPETUAL' && s.symbol.endsWith('USDT') && !EXCLUDE.includes(s.symbol))
+    .map(s => s.symbol);
+}
+
+async function fetchTopSymbols(limit = MAX_SYMBOLS) {
+  const url = 'https://fapi.binance.com/fapi/v1/ticker/24hr';
+  const [tickRes, perpSymbols] = await Promise.all([fetch(url), fetchPerpetualSymbols()]);
+  if (!tickRes.ok) throw new Error('ticker24h failed');
+  const tick = await tickRes.json();
+  const filtered = tick
+    .filter(t => t.symbol.endsWith('USDT') && perpSymbols.includes(t.symbol))
+    .sort((a,b) => Math.abs(parseFloat(b.priceChangePercent || 0)) - Math.abs(parseFloat(a.priceChangePercent || 0)))
+    .slice(0, limit)
+    .map(t => t.symbol);
+  return filtered;
+}
+
+async function fetchKlines(symbol) {
+  const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${INTERVAL}&limit=${LIMIT}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`klines failed ${symbol}`);
+  const raw = await res.json();
+  return raw.map(r => ({ open:+r[1], high:+r[2], low:+r[3], close:+r[4], volume:+r[5] }) );
+}
+
+/* EMA array */
+function emaArray(values, period) {
+  const k = 2 / (period + 1);
+  const out = new Array(values.length).fill(null);
+  out[0] = values[0];
+  for (let i=1;i<values.length;i++) out[i] = values[i] * k + out[i-1] * (1 - k);
+  return out;
+}
+
+/* MACD arrays and histogram */
+function macdArrays(closes, short=12, long=26, signal=9) {
+  const emaShort = emaArray(closes, short);
+  const emaLong = emaArray(closes, long);
+  const macd = closes.map((_,i) => (emaShort[i] !== null && emaLong[i] !== null) ? (emaShort[i] - emaLong[i]) : 0);
+  const signalArr = emaArray(macd, signal);
+  const hist = macd.map((v,i) => v - signalArr[i]);
+  return { macd, signalArr, hist };
+}
+
+/* helpers */
+function candleColor(c) { if (c.close > c.open) return 'green'; if (c.close < c.open) return 'red'; return 'doji'; }
+function checkColorChange(prev, last) { const pc = candleColor(prev), lc = candleColor(last); return (pc !== lc) && pc !== 'doji' && lc !== 'doji'; }
+function histIncreasingLast3(hist) { if (hist.length < 3) return false; const a = Math.abs(hist[hist.length-3]), b = Math.abs(hist[hist.length-2]), c = Math.abs(hist[hist.length-1]); return (a < b) && (b < c); }
+/* percent change for a candle (close vs open) */
+function pctChange(open, close) { if (!open) return 0; return ((close - open) / open) * 100; }
+
+/* compute last-6 per-candle ROC array: returns for candles -6..-1 (length 6), index 0 => -6, index 5 => -1 */
+function computeLast6Roc(closes) {
+  // closes: array oldest->newest
+  const n = closes.length;
+  if (n < 7) return [];
+  const rocs = [];
+  // compute for last 6 candles i from n-6 .. n-1; each roc = (close[i] - close[i-1]) / close[i-1] *100
+  for (let i = n - 6; i < n; i++) {
+    const cur = closes[i];
+    const prev = closes[i-1];
+    rocs.push(((cur - prev) / prev) * 100);
+  }
+  return rocs; // length 6, rocs[3] is roc[-3]? let's map: rocs[0]=>-6, rocs[5]=>-1 so roc[-3] is rocs[3]
+}
+
+/* live append row */
+function appendMatchRow(obj) {
+  const sort = sortOpt.value;
+  if (sort === 'roc3_desc') {
+    // default descending: append and keep (we'll not reorder immediately)
+    const tr = document.createElement('tr');
+    tr.className = 'match';
+    tr.innerHTML = `
+      <td><strong>${obj.symbol}</strong></td>
+      <td>${obj.roc3.toFixed(3)}</td>
+      <td>${obj.avg32.toFixed(3)}</td>
+      <td class="${obj.prevPct>=0 ? 'green' : 'red'}">${obj.prevPct.toFixed(2)}%</td>
+      <td class="${obj.currPct>=0 ? 'green' : 'red'}">${obj.currPct.toFixed(2)}%</td>
+      <td class="small">${obj.note}</td>
+    `;
+    resultsBody.appendChild(tr);
+  } else {
+    // if sorted view active, re-render full sorted list
+    renderMatches();
+  }
+}
+
+/* render matches sorted by dropdown */
+function renderMatches() {
+  const opt = sortOpt.value;
+  let sorted = [...matches];
+  if (opt === 'roc3_desc') sorted.sort((a,b)=> b.roc3 - a.roc3);
+  else if (opt === 'roc3_asc') sorted.sort((a,b)=> a.roc3 - b.roc3);
+  else if (opt === 'avg_desc') sorted.sort((a,b)=> b.avg32 - a.avg32);
+  else if (opt === 'avg_asc') sorted.sort((a,b)=> a.avg32 - b.avg32);
+  else if (opt === 'prev_desc') sorted.sort((a,b)=> b.prevPct - a.prevPct);
+  else if (opt === 'prev_asc') sorted.sort((a,b)=> a.prevPct - b.prevPct);
+  else if (opt === 'curr_desc') sorted.sort((a,b)=> b.currPct - a.currPct);
+  else if (opt === 'curr_asc') sorted.sort((a,b)=> a.currPct - b.currPct);
+
+  resultsBody.innerHTML = '';
+  if (sorted.length === 0) {
+    resultsBody.innerHTML = '<tr><td colspan="6" class="small">No matches yet.</td></tr>';
+    return;
+  }
+  for (const m of sorted) {
+    const tr = document.createElement('tr');
+    tr.className = 'match';
+    tr.innerHTML = `
+      <td><strong>${m.symbol}</strong></td>
+      <td>${m.roc3.toFixed(3)}</td>
+      <td>${m.avg32.toFixed(3)}</td>
+      <td class="${m.prevPct>=0 ? 'green' : 'red'}">${m.prevPct.toFixed(2)}%</td>
+      <td class="${m.currPct>=0 ? 'green' : 'red'}">${m.currPct.toFixed(2)}%</td>
+      <td class="small">${m.note}</td>
+    `;
+    resultsBody.appendChild(tr);
+  }
+}
+
+/* main scanning loop */
+async function runScan() {
+  try {
+    matches = [];
+    resultsBody.innerHTML = '<tr><td colspan="6" class="small">Preparing scan...</td></tr>';
+    statusEl.textContent = 'Preparing symbols...';
+
+    const symbols = await fetchTopSymbols(MAX_SYMBOLS);
+    statusEl.textContent = `Scanning 0 / ${symbols.length}`;
+
+    let idx = 0;
+    for (const sym of symbols) {
+      idx++;
+      statusEl.textContent = `Scanning ${idx} / ${symbols.length}: ${sym}`;
+      try {
+        const klines = await fetchKlines(sym);
+        if (!klines || klines.length < 10) { await sleep(80); continue; }
+
+        const n = klines.length;
+        // Candle objects
+        const last = klines[n-1], prev = klines[n-2], prev2 = klines[n-3]; // last = -1, prev = -2, prev2 = -3
+
+        // color pattern
+        const colorPrev2 = candleColor(prev2), colorPrev = candleColor(prev), colorLast = candleColor(last);
+        if (colorPrev2 === 'doji' || colorPrev === 'doji' || colorLast === 'doji') { await sleep(80); continue; }
+        if (!(colorPrev2 === colorPrev && colorPrev !== colorLast)) { await sleep(80); continue; }
+
+        // closes array
+        const closes = klines.map(k => k.close);
+        if (closes.length < 7) { await sleep(80); continue; } // need at least 7 to compute 6 rocs
+
+        // compute last 6 rocs
+        const rocs = computeLast6Roc(closes); // length 6, index 3 => roc[-3]
+        if (rocs.length !== 6) { await sleep(80); continue; }
+        const roc3 = rocs[3]; // roc at -3
+        const roc2 = rocs[4]; // roc at -2
+        const avg32 = (roc3 + roc2) / 2;
+
+        // MACD distance check
+        const { hist } = macdArrays(closes, 12, 26, 9);
+        // compute macd and signal arrays distances as abs(macd - signal) earlier; we used hist array (macd - signal)
+        if (!hist || hist.length < 3) { await sleep(80); continue; }
+        // check increasing of absolute distance across last 3
+        const a = Math.abs(hist[hist.length-3]), b = Math.abs(hist[hist.length-2]), c = Math.abs(hist[hist.length-1]);
+        if (!(a < b && b < c)) { await sleep(80); continue; }
+
+        // percent changes for prev and current candle (close vs open)
+        const prevOpen = klines[n-2].open, prevClose = klines[n-2].close;
+        const lastOpen = klines[n-1].open, lastClose = klines[n-1].close;
+        const prevPct = pctChange(prevOpen, prevClose);
+        const currPct = pctChange(lastOpen, lastClose);
+
+        // matched — add to results and show live
+        const match = {
+          symbol: sym,
+          roc3: Number(roc3),
+          avg32: Number(avg32),
+          prevPct: Number(prevPct),
+          currPct: Number(currPct),
+          note: `${colorPrev2}/${colorPrev}/${colorLast}`
+        };
+        matches.push(match);
+        appendMatchRow(match);
+      } catch (errSym) {
+        // ignore symbol errors and continue
+      }
+      await sleep(90);
+    }
+
+    statusEl.textContent = `Scan complete — ${matches.length} matches found.`;
+    // if a sorted view is selected, render all sorted
+    if (sortOpt.value !== 'roc3_desc') renderMatches();
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = 'Error: ' + (err.message || err);
+  }
+}
+
+/* small sleep */
+function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+
+async function handleRefresh() {
+  refreshBtn.disabled = true;
+  resultsBody.innerHTML = '<tr><td colspan="6" class="small">Starting scan...</td></tr>';
+  await runScan();
+  refreshBtn.disabled = false;
+}
+
+/* auto-run on load */
+handleRefresh();
+
+</script>
+</body>
+</html>

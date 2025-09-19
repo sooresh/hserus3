@@ -1,324 +1,169 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>hserus 3 (n=3)</title>
+  <meta charset="UTF-8">
+  <title>hserus3</title>
   <style>
-    :root{--bg:#071827;--card:#0b2430;--muted:#9fb6c7;--accent:#7be3c7;--danger:#ff9a9a}
-    body{margin:0;font-family:Inter,Arial,Helvetica,sans-serif;background:linear-gradient(180deg,#021119 0%,#051521 100%);color:#e6f3f6;padding:12px}
-    header{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px}
-    h1{font-size:18px;margin:0}
-    .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-    select,button{padding:8px;border-radius:8px;border:1px solid #12333d;background:var(--card);color:inherit}
-    button{cursor:pointer}
-    #status{font-size:13px;color:var(--muted)}
-    main{margin-top:12px}
-    table{width:100%;border-collapse:collapse;font-size:13px}
-    th,td{text-align:left;padding:10px;border-bottom:1px solid rgba(255,255,255,0.04)}
-    th{color:var(--muted);font-size:12px}
-    tr.match{background:linear-gradient(90deg, rgba(11,36,48,0.8), rgba(6,28,36,0.6));border-radius:6px}
-    .small{font-size:12px;color:var(--muted)}
-    .green{color:#7be3c7}
-    .red{color:#ff9a9a}
-    @media(max-width:640px){ th,td{padding:8px;font-size:12px} h1{font-size:16px} }
+    body { font-family: Arial, sans-serif; background: #f9fafb; color: #111; margin: 20px; }
+    h1 { text-align: center; }
+    button { padding: 8px 16px; margin: 10px 0; cursor: pointer; border: none; border-radius: 6px; background: #2563eb; color: #fff; }
+    #status { margin: 10px 0; font-weight: bold; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { padding: 8px 12px; border: 1px solid #ddd; text-align: center; }
+    th { background: #f3f4f6; cursor: pointer; }
+    tr:nth-child(even) { background: #f9f9f9; }
+    .green { color: green; font-weight: bold; }
+    .red { color: red; font-weight: bold; }
   </style>
 </head>
 <body>
-  <header>
-    <div>
-      <h1>hserus 3 n=3</h1>
-      <div class="small">Filters: hserus 3.</div>
-    </div>
+  <h1>hserus3</h1>
+  <button onclick="refreshData()">Refresh</button>
+  <div id="status">Idle</div>
+  <table id="screener">
+    <thead>
+      <tr>
+        <th onclick="sortTable(0)">Symbol</th>
+        <th onclick="sortTable(1)">Current Close %</th>
+        <th onclick="sortTable(2)">% More than Prev</th>
+        <th onclick="sortTable(3)">Prev Candle</th>
+        <th onclick="sortTable(4)">Volume % Chg</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
 
-    <div class="controls">
-      <label class="small">Sort:
-        <select id="sortOpt">
-          <option value="roc3_desc">ROC[-3] ↓ (default)</option>
-          <option value="roc3_asc">ROC[-3] ↑</option>
-          <option value="avg32_desc">Avg(ROC[-3],ROC[-2]) ↓</option>
-          <option value="avg32_asc">Avg(ROC[-3],ROC[-2]) ↑</option>
-          <option value="avg321_desc">Avg(ROC[-3],ROC[-2],ROC[-1]) ↓</option>
-          <option value="avg321_asc">Avg(ROC[-3],ROC[-2],ROC[-1]) ↑</option>
-          <option value="roc1_desc">ROC[-1] ↓</option>
-          <option value="roc1_asc">ROC[-1] ↑</option>
-        </select>
-      </label>
+  <script>
+    const API_KLINES = "https://fapi.binance.com/fapi/v1/klines";
+    const API_EXCHANGEINFO = "https://fapi.binance.com/fapi/v1/exchangeInfo";
+    const API_TICKER24H = "https://fapi.binance.com/fapi/v1/ticker/24hr";
+    const excludeSymbols = ["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","TRXUSDT","MATICUSDT","DOTUSDT","TONUSDT","LTCUSDT","BCHUSDT","AVAXUSDT","LINKUSDT","UNIUSDT","XLMUSDT","OPUSDT","ETCUSDT","NEARUSDT"];
 
-      <button id="refreshBtn">Refresh</button>
-      <div id="status">Ready</div>
-    </div>
-  </header>
+    async function fetchSymbols() {
+      let resInfo = await fetch(API_EXCHANGEINFO);
+      let dataInfo = await resInfo.json();
+      let symbolsAll = dataInfo.symbols.filter(s=>s.contractType==="PERPETUAL").map(s=>s.symbol);
 
-  <main>
-    <table aria-live="polite">
-      <thead>
-        <tr>
-          <th>Symbol</th>
-          <th>ROC[-3] %</th>
-          <th>Avg(ROC[-3],ROC[-2]) %</th>
-          <th>Avg(ROC[-3..-1]) %</th>
-          <th>ROC[-1] %</th>
-          <th>Prev Δ %</th>
-          <th>Curr Δ %</th>
-          <th class="small">Note</th>
-        </tr>
-      </thead>
-      <tbody id="resultsBody">
-        <tr><td colspan="8" class="small">Click Refresh to scan — progress will appear above and matches will show live as they’re found.</td></tr>
-      </tbody>
-    </table>
-  </main>
+      let resTick = await fetch(API_TICKER24H);
+      let tickers = await resTick.json();
 
-<script>
-/* Momentum screener — single-file
-   - LIMIT = 40 candles (1h)
-   - top 200 perpetual USDT (excludes big caps)
-   - ROC n = 3:
-       ROC for candle i = (close[i] - close[i-3]) / close[i-3] * 100
-     So ROC[-3] uses close[-3] vs close[-6], ROC[-1] uses close[-1] vs close[-4].
-   - Conditions:
-     * candle[-3] and candle[-2] same color (green/red; no doji)
-     * candle[-1] and candle[-2] different color
-     * abs(macd - signal) must be strictly increasing across last 3 candles
-*/
+      let filtered = tickers.filter(t => symbolsAll.includes(t.symbol));
+      filtered.sort((a,b)=> parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume));
 
-const LIMIT = 40;
-const INTERVAL = '1h';
-const MAX_SYMBOLS = 200;
-const EXCLUDE = ["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","TONUSDT","AVAXUSDT","DOTUSDT","TRXUSDT","SHIBUSDT","LINKUSDT","NEARUSDT","MATICUSDT","LTCUSDT","UNIUSDT","BCHUSDT","ICPUSDT","LEOUSDT"];
+      // Only USDT pairs, exclude USDC, exclude top 20
+      let symbols = filtered.map(t=>t.symbol).filter(s=>
+        s.endsWith("USDT") &&
+        !s.endsWith("USDC") &&
+        !excludeSymbols.includes(s)
+      );
 
-const statusEl = document.getElementById('status');
-const resultsBody = document.getElementById('resultsBody');
-const refreshBtn = document.getElementById('refreshBtn');
-const sortOpt = document.getElementById('sortOpt');
-
-let matches = [];
-
-refreshBtn.addEventListener('click', () => handleRefresh());
-sortOpt.addEventListener('change', () => renderMatches());
-
-/* ---- Helpers: API fetching ---- */
-async function fetchPerpetualSymbols(){
-  const url = 'https://fapi.binance.com/fapi/v1/exchangeInfo';
-  const res = await fetch(url);
-  if(!res.ok) throw new Error('exchangeInfo failed');
-  const data = await res.json();
-  return data.symbols
-    .filter(s => s.contractType === 'PERPETUAL' && s.symbol.endsWith('USDT') && !EXCLUDE.includes(s.symbol))
-    .map(s => s.symbol);
-}
-
-async function fetchTopSymbols(limit = MAX_SYMBOLS) {
-  const url = 'https://fapi.binance.com/fapi/v1/ticker/24hr';
-  const [tickRes, perpSymbols] = await Promise.all([fetch(url), fetchPerpetualSymbols()]);
-  if(!tickRes.ok) throw new Error('ticker24h failed');
-  const tick = await tickRes.json();
-  return tick
-    .filter(t => t.symbol.endsWith('USDT') && perpSymbols.includes(t.symbol))
-    .sort((a,b) => Math.abs(parseFloat(b.priceChangePercent || 0)) - Math.abs(parseFloat(a.priceChangePercent || 0)))
-    .slice(0, limit)
-    .map(t => t.symbol);
-}
-
-async function fetchKlines(symbol){
-  const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${INTERVAL}&limit=${LIMIT}`;
-  const res = await fetch(url);
-  if(!res.ok) throw new Error(`klines failed ${symbol}`);
-  const raw = await res.json();
-  return raw.map(r => ({ open:+r[1], high:+r[2], low:+r[3], close:+r[4], volume:+r[5] }) );
-}
-
-/* ---- Math helpers ---- */
-function emaArray(values, period){
-  const k = 2 / (period + 1);
-  const out = new Array(values.length).fill(null);
-  out[0] = values[0];
-  for(let i=1;i<values.length;i++) out[i] = values[i]*k + out[i-1]*(1-k);
-  return out;
-}
-function macdArrays(closes, short=12, long=26, signal=9){
-  const emaShort = emaArray(closes, short);
-  const emaLong = emaArray(closes, long);
-  const macd = closes.map((_,i) => (emaShort[i] !== null && emaLong[i] !== null) ? (emaShort[i]-emaLong[i]) : 0);
-  const signalArr = emaArray(macd, signal);
-  const hist = macd.map((v,i) => v - signalArr[i]);
-  return { macd, signalArr, hist };
-}
-
-function candleColor(c){ if(c.close>c.open) return 'green'; if(c.close<c.open) return 'red'; return 'doji'; }
-function pctChange(open, close){ if(!open) return 0; return ((close - open)/open)*100; }
-
-/* Compute ROC n=3 for last 6 candles and return roc array where:
-   rocs[0] => candle[-6] roc, rocs[5] => candle[-1] roc
-   We will use rocs[2] => ROC[-4]? but we specifically need:
-   ROC[-3] -> rocs[3], ROC[-2] -> rocs[4], ROC[-1] -> rocs[5]
-*/
-function computeLast6RocsByN3(closes){
-  const n = closes.length;
-  if(n < 7) return []; // need at least 7 closes to compute roc for -3 (needs close[-6])
-  const rocs = [];
-  for(let i = n - 6; i < n; i++){
-    const cur = closes[i];
-    const ref = closes[i - 3];
-    rocs.push(((cur - ref)/ref) * 100);
-  }
-  return rocs; // length 6: rocs[3] => ROC[-3], rocs[4] => ROC[-2], rocs[5] => ROC[-1]
-}
-
-/* MACD distance increasing check (abs(macd - signal)) over last 3 */
-function macdDistanceIncreasing(hist){
-  if(!hist || hist.length < 3) return false;
-  const a = Math.abs(hist[hist.length-3]), b = Math.abs(hist[hist.length-2]), c = Math.abs(hist[hist.length-1]);
-  return (a < b && b < c);
-}
-
-/* live append: if default sort (roc3_desc) we'll append as found; otherwise re-render sorted list */
-function appendMatchRow(obj){
-  const sort = sortOpt.value;
-  if(sort === 'roc3_desc'){
-    const tr = document.createElement('tr');
-    tr.className = 'match';
-    tr.innerHTML = `
-      <td><strong>${obj.symbol}</strong></td>
-      <td>${obj.roc3.toFixed(3)}</td>
-      <td>${obj.avg32.toFixed(3)}</td>
-      <td>${obj.avg321.toFixed(3)}</td>
-      <td>${obj.roc1.toFixed(3)}</td>
-      <td class="${obj.prevPct>=0 ? 'green' : 'red'}">${obj.prevPct.toFixed(2)}%</td>
-      <td class="${obj.currPct>=0 ? 'green' : 'red'}">${obj.currPct.toFixed(2)}%</td>
-      <td class="small">${obj.note}</td>
-    `;
-    resultsBody.appendChild(tr);
-  } else {
-    renderMatches();
-  }
-}
-
-/* render matches according to sort dropdown */
-function renderMatches(){
-  const opt = sortOpt.value;
-  let sorted = [...matches];
-  if(opt === 'roc3_desc') sorted.sort((a,b)=> b.roc3 - a.roc3);
-  else if(opt === 'roc3_asc') sorted.sort((a,b)=> a.roc3 - b.roc3);
-  else if(opt === 'avg32_desc') sorted.sort((a,b)=> b.avg32 - a.avg32);
-  else if(opt === 'avg32_asc') sorted.sort((a,b)=> a.avg32 - b.avg32);
-  else if(opt === 'avg321_desc') sorted.sort((a,b)=> b.avg321 - a.avg321);
-  else if(opt === 'avg321_asc') sorted.sort((a,b)=> a.avg321 - b.avg321);
-  else if(opt === 'roc1_desc') sorted.sort((a,b)=> b.roc1 - a.roc1);
-  else if(opt === 'roc1_asc') sorted.sort((a,b)=> a.roc1 - b.roc1);
-
-  resultsBody.innerHTML = '';
-  if(sorted.length === 0){
-    resultsBody.innerHTML = '<tr><td colspan="8" class="small">No matches yet.</td></tr>';
-    return;
-  }
-  for(const m of sorted){
-    const tr = document.createElement('tr');
-    tr.className = 'match';
-    tr.innerHTML = `
-      <td><strong>${m.symbol}</strong></td>
-      <td>${m.roc3.toFixed(3)}</td>
-      <td>${m.avg32.toFixed(3)}</td>
-      <td>${m.avg321.toFixed(3)}</td>
-      <td>${m.roc1.toFixed(3)}</td>
-      <td class="${m.prevPct>=0 ? 'green' : 'red'}">${m.prevPct.toFixed(2)}%</td>
-      <td class="${m.currPct>=0 ? 'green' : 'red'}">${m.currPct.toFixed(2)}%</td>
-      <td class="small">${m.note}</td>
-    `;
-    resultsBody.appendChild(tr);
-  }
-}
-
-/* Main scanning loop (sequential, with small delay so UI updates) */
-async function runScan(){
-  try {
-    matches = [];
-    resultsBody.innerHTML = '<tr><td colspan="8" class="small">Preparing scan...</td></tr>';
-    statusEl.textContent = 'Preparing symbols...';
-
-    const symbols = await fetchTopSymbols(MAX_SYMBOLS);
-    statusEl.textContent = `Scanning 0 / ${symbols.length}`;
-
-    let idx = 0;
-    for(const sym of symbols){
-      idx++;
-      statusEl.textContent = `Scanning ${idx} / ${symbols.length}: ${sym}`;
-      try {
-        const klines = await fetchKlines(sym);
-        if(!klines || klines.length < 10){ await sleep(80); continue; }
-
-        const n = klines.length;
-        const last = klines[n-1], prev = klines[n-2], prev2 = klines[n-3];
-
-        // color checks
-        const c2 = candleColor(prev2), c1 = candleColor(prev), c0 = candleColor(last);
-        if(c2 === 'doji' || c1 === 'doji' || c0 === 'doji'){ await sleep(80); continue; }
-        if(!(c2 === c1 && c1 !== c0)){ await sleep(80); continue; }
-
-        // closes array
-        const closes = klines.map(k => k.close);
-        if(closes.length < 7){ await sleep(80); continue; }
-
-        // compute rocs with n=3 for last 6 candles
-        const rocs = computeLast6RocsByN3(closes);
-        if(rocs.length !== 6){ await sleep(80); continue; }
-
-        // map to requested values:
-        const roc3 = rocs[3]; // ROC[-3]
-        const roc2 = rocs[4]; // ROC[-2]
-        const roc1 = rocs[5]; // ROC[-1]
-        const avg32 = (roc3 + roc2) / 2;
-        const avg321 = (roc3 + roc2 + roc1) / 3;
-
-        // MACD hist (use hist = macd - signal); check abs(hist) increasing
-        const { hist } = macdArrays(closes, 12, 26, 9);
-        if(!hist || hist.length < 3){ await sleep(80); continue; }
-        if(!macdDistanceIncreasing(hist)){ await sleep(80); continue; }
-
-        // prev & curr candle % changes (close vs open)
-        const prevOpen = klines[n-2].open, prevClose = klines[n-2].close;
-        const lastOpen = klines[n-1].open, lastClose = klines[n-1].close;
-        const prevPct = pctChange(prevOpen, prevClose);
-        const currPct = pctChange(lastOpen, lastClose);
-
-        // matched -> push and append live
-        const note = `${c2}/${c1}/${c0}`;
-        const match = {
-          symbol: sym,
-          roc3: Number(roc3), avg32: Number(avg32), avg321: Number(avg321), roc1: Number(roc1),
-          prevPct: Number(prevPct), currPct: Number(currPct),
-          note
-        };
-        matches.push(match);
-        appendMatchRow(match);
-      } catch(e){
-        // ignore symbol error and continue
-      }
-      await sleep(90);
+      return symbols.slice(0,200);
     }
 
-    statusEl.textContent = `Scan complete — ${matches.length} matches found.`;
-    // if user has chosen a sorted view, re-render final sorted table
-    if(sortOpt.value !== 'roc3_desc') renderMatches();
-  } catch(err){
-    console.error(err);
-    statusEl.textContent = 'Error: ' + (err.message || err);
-  }
-}
+    async function fetchKlines(symbol, interval="15m", limit=5) {
+      let url = `${API_KLINES}?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+      let res = await fetch(url);
+      return res.json();
+    }
 
-function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+    async function checkSymbol(symbol) {
+      try {
+        let klines = await fetchKlines(symbol);
+        if (!klines || klines.length < 3) return null;
 
-async function handleRefresh(){
-  refreshBtn.disabled = true;
-  resultsBody.innerHTML = '<tr><td colspan="8" class="small">Starting scan...</td></tr>';
-  await runScan();
-  refreshBtn.disabled = false;
-}
+        let last = klines.length-1;
+        let prev = last-1;
+        let prevprev = last-2;
 
-/* auto-run on load */
-handleRefresh();
+        let openCurr = parseFloat(klines[last][1]);
+        let closeCurr = parseFloat(klines[last][4]);
+        let volCurr = parseFloat(klines[last][5]);
 
-</script>
+        let openPrev = parseFloat(klines[prev][1]);
+        let closePrev = parseFloat(klines[prev][4]);
+        let volPrev = parseFloat(klines[prev][5]);
+
+        let openPrevPrev = parseFloat(klines[prevprev][1]);
+        let closePrevPrev = parseFloat(klines[prevprev][4]);
+
+        // Candle colour
+        let currGreen = closeCurr > openCurr;
+        if (!currGreen) return null; // Condition (1)
+
+        let prevGreen = closePrev > openPrev ? "Green" : "Red";
+
+        // Close % changes
+        let currChg = ((closeCurr - openCurr) / openCurr) * 100;
+        let prevChg = ((closePrev - openPrev) / openPrev) * 100;
+        let prevPrevChg = ((closePrevPrev - openPrevPrev) / openPrevPrev) * 100;
+
+        // Condition (2): curr > abs(prev & prevprev)
+        if (!(currChg > Math.abs(prevChg) && currChg > Math.abs(prevPrevChg))) return null;
+
+        // Extra metrics
+        let moreThanPrev = prevChg !== 0 ? ((currChg / Math.abs(prevChg)) * 100).toFixed(1) + "%" : "∞";
+        let volChg = ((volCurr - volPrev) / volPrev) * 100;
+
+        return {
+          symbol,
+          currChg: currChg.toFixed(2)+"%",
+          moreThanPrev,
+          prevColor: prevGreen,
+          volChg: volChg.toFixed(2)+"%"
+        };
+      } catch(e) {
+        console.error(symbol, e);
+        return null;
+      }
+    }
+
+    async function refreshData() {
+      document.querySelector("tbody").innerHTML = "<tr><td colspan='5'>Loading symbols...</td></tr>";
+      document.getElementById("status").innerText = "Fetching top 200 symbols...";
+      let symbols = await fetchSymbols();
+
+      let results = [];
+      for (let i=0;i<symbols.length;i++) {
+        document.getElementById("status").innerText = `Scanning ${i+1}/${symbols.length}: ${symbols[i]}`;
+        let row = await checkSymbol(symbols[i]);
+        if (row) results.push(row);
+      }
+
+      let tbody = document.querySelector("tbody");
+      tbody.innerHTML = "";
+      if (results.length === 0) {
+        tbody.innerHTML = "<tr><td colspan='5'>No matches found</td></tr>";
+      } else {
+        results.forEach(r=>{
+          tbody.innerHTML += `<tr>
+            <td>${r.symbol}</td>
+            <td>${r.currChg}</td>
+            <td>${r.moreThanPrev}</td>
+            <td class="${r.prevColor==='Green'?'green':'red'}">${r.prevColor}</td>
+            <td>${r.volChg}</td>
+          </tr>`;
+        });
+      }
+      document.getElementById("status").innerText = "Scan complete";
+    }
+
+    function sortTable(col) {
+      let table = document.getElementById("screener");
+      let rows = Array.from(table.rows).slice(1);
+      let asc = table.getAttribute("data-sort-col")==col && table.getAttribute("data-sort-dir")=="asc" ? false : true;
+      rows.sort((a,b)=>{
+        let x = a.cells[col].innerText.replace("%","");
+        let y = b.cells[col].innerText.replace("%","");
+        if (isNaN(x) || isNaN(y)) return asc ? x.localeCompare(y) : y.localeCompare(x);
+        return asc ? x-y : y-x;
+      });
+      rows.forEach(r=>table.tBodies[0].appendChild(r));
+      table.setAttribute("data-sort-col", col);
+      table.setAttribute("data-sort-dir", asc ? "asc":"desc");
+    }
+
+    // Run on page load
+    refreshData();
+  </script>
 </body>
 </html>

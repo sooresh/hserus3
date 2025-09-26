@@ -6,191 +6,153 @@
   <style>
     body {
       font-family: Arial, sans-serif;
-      background: #f9f9f9;
+      background: #0d1117;
+      color: #e6edf3;
+      margin: 0;
       padding: 20px;
     }
-    h1 { text-align: center; }
-    button {
-      margin: 10px 0;
-      padding: 10px 20px;
-      background: #007bff;
-      color: white;
-      border: none;
-      cursor: pointer;
-      border-radius: 5px;
-    }
-    button:hover { background: #0056b3; }
-    #progress { margin: 10px 0; font-weight: bold; }
+    h2 { text-align: center; margin-bottom: 20px; }
     table {
       width: 100%;
       border-collapse: collapse;
       margin-top: 10px;
-      background: white;
     }
     th, td {
-      border: 1px solid #ddd;
-      padding: 6px;
-      text-align: center;
-      font-size: 13px;
+      border: 1px solid #30363d;
+      padding: 6px 10px;
+      text-align: right;
     }
     th {
-      background: #007bff;
-      color: white;
-      cursor: pointer;
+      background: #161b22;
+      position: sticky;
+      top: 0;
     }
-    tr:nth-child(even) { background: #f2f2f2; }
+    tr:nth-child(even) { background: #161b22; }
+    tr:hover { background: #21262d; }
+    td.symbol { text-align: left; font-weight: bold; color: #58a6ff; }
+    .positive { color: #3fb950; }
+    .negative { color: #f85149; }
   </style>
 </head>
 <body>
+  <h2>hserus3</h2>
+  <table id="data-table">
+    <thead>
+      <tr>
+        <th>Symbol</th>
+        <th>Close %</th>
+        <th>Vol %</th>
+        <th>OI Δ</th>
+        <th>Long Ratio</th>
+        <th>New Longs</th>
+        <th>New Shorts</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
 
-<h1>hserus3</h1>
-<button onclick="runScanner()">Refresh</button>
-<div id="progress"></div>
-<table id="resultsTable">
-  <thead>
-    <tr>
-      <th onclick="sortTable(0)">Symbol</th>
-      <th onclick="sortTable(1)">OI %</th>
-      <th onclick="sortTable(2)">Long %</th>
-      <th onclick="sortTable(3)">Short %</th>
-      <th onclick="sortTable(4)">ΔLongs</th>
-      <th onclick="sortTable(5)">ΔShorts</th>
-      <th onclick="sortTable(6)">ΔLongs USD</th>
-      <th onclick="sortTable(7)">ΔShorts USD</th>
-      <th onclick="sortTable(8)">Close %</th>
-      <th onclick="sortTable(9)">Vol %</th>
-    </tr>
-  </thead>
-  <tbody></tbody>
-</table>
+  <script>
+    async function getTop200Symbols() {
+      try {
+        // 1. Fetch exchange info to get all USDT perpetuals
+        const exchangeInfo = await fetch("https://fapi.binance.com/fapi/v1/exchangeInfo").then(r => r.json());
+        let usdtSymbols = exchangeInfo.symbols
+          .filter(s => s.contractType === "PERPETUAL" && s.symbol.endsWith("USDT") && !s.symbol.includes("USDC"))
+          .map(s => s.symbol);
 
-<script>
-const API_BASE = "https://fapi.binance.com";
-const MAX_SYMBOLS = 200;
+        // 2. Fetch 24h stats
+        const stats = await fetch("https://fapi.binance.com/fapi/v1/ticker/24hr").then(r => r.json());
+        let statsMap = {};
+        stats.forEach(s => { statsMap[s.symbol] = s; });
 
-async function fetchJSON(url) {
-  const res = await fetch(url);
-  return res.json();
-}
+        // 3. Score each symbol
+        let scored = usdtSymbols.map(sym => {
+          let st = statsMap[sym];
+          if (!st) return null;
+          let vol = parseFloat(st.quoteVolume || 0);
+          let pct = Math.abs(parseFloat(st.priceChangePercent || 0));
+          return { symbol: sym, score: vol * pct };
+        }).filter(x => x);
 
-async function getData(symbol) {
-  try {
-    // Fetch OI + LS + Kline
-    const [oiData, lsData, klines] = await Promise.all([
-      fetchJSON(`${API_BASE}/futures/data/openInterestHist?symbol=${symbol}&period=1h&limit=2`),
-      fetchJSON(`${API_BASE}/futures/data/globalLongShortAccountRatio?symbol=${symbol}&period=1h&limit=2`),
-      fetchJSON(`${API_BASE}/fapi/v1/klines?symbol=${symbol}&interval=1h&limit=2`)
-    ]);
+        // 4. Sort and take top 200
+        scored.sort((a, b) => b.score - a.score);
+        let top200 = scored.slice(0, 200).map(x => x.symbol);
 
-    if (oiData.length < 2 || lsData.length < 2 || klines.length < 2) return null;
+        // 5. Exclude top 30 global market cap coins
+        const excluded = [
+          "BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","DOGEUSDT",
+          "AVAXUSDT","TRXUSDT","DOTUSDT","MATICUSDT","SHIBUSDT","LINKUSDT","BCHUSDT",
+          "LTCUSDT","ICPUSDT","ETCUSDT","UNIUSDT","XLMUSDT","APTUSDT",
+          "NEARUSDT","FILUSDT","HBARUSDT","VETUSDT","MNTUSDT","RNDRUSDT",
+          "ARBUSDT","OPUSDT","AAVEUSDT","GRTUSDT"
+        ];
+        top200 = top200.filter(sym => !excluded.includes(sym));
 
-    const oiPrev = parseFloat(oiData[0].sumOpenInterest);
-    const oiCurr = parseFloat(oiData[1].sumOpenInterest);
-
-    const longPrev = parseFloat(lsData[0].longAccount) / 100;
-    const longCurr = parseFloat(lsData[1].longAccount) / 100;
-    const shortPrev = 1 - longPrev;
-    const shortCurr = 1 - longCurr;
-
-    // Long/Short OI absolute
-    const longOIprev = longPrev * oiPrev;
-    const longOIcurr = longCurr * oiCurr;
-    const shortOIprev = shortPrev * oiPrev;
-    const shortOIcurr = shortCurr * oiCurr;
-
-    const deltaLongs = longOIcurr - longOIprev;
-    const deltaShorts = shortOIcurr - shortOIprev;
-
-    // kline close/volume change
-    const [prevOpen, prevClose, prevVol] = [parseFloat(klines[0][1]), parseFloat(klines[0][4]), parseFloat(klines[0][5])];
-    const [currOpen, currClose, currVol] = [parseFloat(klines[1][1]), parseFloat(klines[1][4]), parseFloat(klines[1][5])];
-
-    const closeChangePct = ((currClose - prevClose) / prevClose * 100).toFixed(2);
-    const volChangePct = ((currVol - prevVol) / prevVol * 100).toFixed(2);
-
-    return {
-      symbol,
-      oiChangePct: ((oiCurr - oiPrev) / oiPrev * 100).toFixed(2),
-      longPct: (longCurr * 100).toFixed(2),
-      shortPct: (shortCurr * 100).toFixed(2),
-      deltaLongs: deltaLongs.toFixed(2),
-      deltaShorts: deltaShorts.toFixed(2),
-      deltaLongsUsd: (deltaLongs * currClose).toFixed(2),
-      deltaShortsUsd: (deltaShorts * currClose).toFixed(2),
-      closeChangePct,
-      volChangePct
-    };
-  } catch (err) {
-    console.error("Error fetching data for", symbol, err);
-    return null;
-  }
-}
-
-async function runScanner() {
-  document.querySelector("#progress").innerText = "Loading symbols...";
-  document.querySelector("#resultsTable tbody").innerHTML = "";
-
-  const exchangeInfo = await fetchJSON(`${API_BASE}/fapi/v1/exchangeInfo`);
-  const symbols = exchangeInfo.symbols
-    .filter(s => s.contractType === "PERPETUAL" && s.symbol.endsWith("USDT"))
-    .map(s => s.symbol)
-    .slice(0, MAX_SYMBOLS);
-
-  const tbody = document.querySelector("#resultsTable tbody");
-
-  for (let i = 0; i < symbols.length; i++) {
-    document.querySelector("#progress").innerText = `Scanning ${i+1} of ${symbols.length}...`;
-    const data = await getData(symbols[i]);
-    if (data) {
-      const row = `<tr>
-        <td>${data.symbol}</td>
-        <td>${data.oiChangePct}%</td>
-        <td>${data.longPct}%</td>
-        <td>${data.shortPct}%</td>
-        <td>${data.deltaLongs}</td>
-        <td>${data.deltaShorts}</td>
-        <td>$${data.deltaLongsUsd}</td>
-        <td>$${data.deltaShortsUsd}</td>
-        <td>${data.closeChangePct}%</td>
-        <td>${data.volChangePct}%</td>
-      </tr>`;
-      tbody.insertAdjacentHTML("beforeend", row);
-    }
-  }
-  document.querySelector("#progress").innerText = "Done!";
-}
-
-// Sorting
-function sortTable(n) {
-  const table = document.getElementById("resultsTable");
-  let switching = true, dir = "asc", switchcount = 0;
-  while (switching) {
-    switching = false;
-    const rows = table.rows;
-    for (let i = 1; i < (rows.length - 1); i++) {
-      let shouldSwitch = false;
-      let x = rows[i].getElementsByTagName("TD")[n];
-      let y = rows[i + 1].getElementsByTagName("TD")[n];
-      let xContent = x.innerText.replace(/[%$]/g,""), yContent = y.innerText.replace(/[%$]/g,"");
-      let xVal = isNaN(parseFloat(xContent)) ? xContent : parseFloat(xContent);
-      let yVal = isNaN(parseFloat(yContent)) ? yContent : parseFloat(yContent);
-
-      if (dir === "asc" && xVal > yVal) { shouldSwitch = true; break; }
-      if (dir === "desc" && xVal < yVal) { shouldSwitch = true; break; }
-    }
-    if (shouldSwitch) {
-      rows[i].parentNode.insertBefore(rows[i + 1], rows[i]);
-      switching = true;
-      switchcount++;
-    } else {
-      if (switchcount === 0 && dir === "asc") {
-        dir = "desc";
-        switching = true;
+        return top200;
+      } catch (e) {
+        console.error("Error fetching top200 symbols:", e);
+        return [];
       }
     }
-  }
-}
-</script>
 
+    // Storage for last values
+    let lastData = {};
+
+    async function fetchData() {
+      const symbols = await getTop200Symbols();
+      const tableBody = document.querySelector("#data-table tbody");
+      tableBody.innerHTML = "";
+
+      for (const symbol of symbols) {
+        try {
+          // Open Interest
+          const oiData = await fetch(`https://fapi.binance.com/fapi/v1/openInterest?symbol=${symbol}`).then(r => r.json());
+          let oi = parseFloat(oiData.openInterest);
+
+          // Long/Short ratio
+          const ratioData = await fetch(`https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=${symbol}&period=5m&limit=2`).then(r => r.json());
+          let longRatio = ratioData.length > 0 ? parseFloat(ratioData[ratioData.length - 1].longAccount) * 100 : 50;
+
+          // 24h stats for close% and volume%
+          const ticker = await fetch(`https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=${symbol}`).then(r => r.json());
+          let closeChange = parseFloat(ticker.priceChangePercent || 0);
+          let volChange = parseFloat(ticker.volume || 0);
+
+          // Previous data
+          let prev = lastData[symbol] || { oi: oi, longRatio: longRatio };
+
+          // Changes
+          let oiChange = oi - prev.oi;
+          let ratioChange = longRatio - prev.longRatio;
+
+          // Distribution
+          let newLongs = (ratioChange / 100) * oi + (longRatio / 100) * oiChange;
+          let newShorts = oiChange - newLongs;
+
+          // Save
+          lastData[symbol] = { oi, longRatio };
+
+          // Row
+          const row = document.createElement("tr");
+          row.innerHTML = `
+            <td class="symbol">${symbol}</td>
+            <td class="${closeChange >= 0 ? "positive" : "negative"}">${closeChange.toFixed(2)}%</td>
+            <td>${volChange.toFixed(2)}</td>
+            <td class="${oiChange >= 0 ? "positive" : "negative"}">${oiChange.toFixed(2)}</td>
+            <td>${longRatio.toFixed(2)}%</td>
+            <td class="${newLongs >= 0 ? "positive" : "negative"}">${newLongs.toFixed(2)}</td>
+            <td class="${newShorts >= 0 ? "positive" : "negative"}">${newShorts.toFixed(2)}</td>
+          `;
+          tableBody.appendChild(row);
+        } catch (err) {
+          console.error("Error for symbol", symbol, err);
+        }
+      }
+    }
+
+    // Refresh every 60s
+    fetchData();
+    setInterval(fetchData, 60000);
+  </script>
 </body>
 </html>

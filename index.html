@@ -1,169 +1,400 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>hserus3</title>
-  <style>
-    body { font-family: Arial, sans-serif; background: #f9fafb; color: #111; margin: 20px; }
-    h1 { text-align: center; }
-    button { padding: 8px 16px; margin: 10px 0; cursor: pointer; border: none; border-radius: 6px; background: #2563eb; color: #fff; }
-    #status { margin: 10px 0; font-weight: bold; }
-    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-    th, td { padding: 8px 12px; border: 1px solid #ddd; text-align: center; }
-    th { background: #f3f4f6; cursor: pointer; }
-    tr:nth-child(even) { background: #f9f9f9; }
-    .green { color: green; font-weight: bold; }
-    .red { color: red; font-weight: bold; }
-  </style>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>hserus3</title>
+<style>
+:root{--bg:#071827;--card:#0b2430;--muted:#9fb6c7;--accent:#7be3c7;--danger:#ff6b6b}
+body{margin:0;font-family:Inter,system-ui,Arial,Helvetica,sans-serif;background:linear-gradient(#041019,#071426);color:#e6f3f6;padding:18px}
+h1{margin:0 0 10px;font-size:18px}
+.controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+select,input,button{padding:8px;border-radius:8px;border:1px solid #12333d;background:var(--card);color:inherit}
+button{cursor:pointer}
+#status{font-size:13px;color:var(--muted);min-width:260px}
+.tablewrap{overflow:auto;border:1px solid rgba(255,255,255,0.03);border-radius:8px;background:rgba(0,0,0,0.06)}
+table{width:100%;border-collapse:collapse;min-width:1100px}
+th,td{text-align:left;padding:10px;border-bottom:1px solid rgba(255,255,255,0.04)}
+th{color:var(--muted);font-size:12px;cursor:pointer}
+tr.match{background:linear-gradient(90deg, rgba(11,36,48,0.4), rgba(6,28,36,0.12))}
+.small{font-size:12px;color:var(--muted)}
+.numeric{text-align:right}
+.green{color:#7be3c7}
+.red{color:var(--danger)}
+@media(max-width:900px){ table{min-width:900px} th,td{padding:8px;font-size:12px} }
+</style>
 </head>
 <body>
   <h1>hserus3</h1>
-  <button onclick="refreshData()">Refresh</button>
-  <div id="status">Idle</div>
-  <table id="screener">
-    <thead>
-      <tr>
-        <th onclick="sortTable(0)">Symbol</th>
-        <th onclick="sortTable(1)">Current Close %</th>
-        <th onclick="sortTable(2)">% More than Prev</th>
-        <th onclick="sortTable(3)">Prev Candle</th>
-        <th onclick="sortTable(4)">Volume % Chg</th>
-      </tr>
-    </thead>
-    <tbody></tbody>
-  </table>
 
-  <script>
-    const API_KLINES = "https://fapi.binance.com/fapi/v1/klines";
-    const API_EXCHANGEINFO = "https://fapi.binance.com/fapi/v1/exchangeInfo";
-    const API_TICKER24H = "https://fapi.binance.com/fapi/v1/ticker/24hr";
-    const excludeSymbols = ["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","TRXUSDT","MATICUSDT","DOTUSDT","TONUSDT","LTCUSDT","BCHUSDT","AVAXUSDT","LINKUSDT","UNIUSDT","XLMUSDT","OPUSDT","ETCUSDT","NEARUSDT"];
+  <div class="controls">
+    <button id="refreshBtn">Refresh Data</button>
 
-    async function fetchSymbols() {
-      let resInfo = await fetch(API_EXCHANGEINFO);
-      let dataInfo = await resInfo.json();
-      let symbolsAll = dataInfo.symbols.filter(s=>s.contractType==="PERPETUAL").map(s=>s.symbol);
+    <label class="small">Period:
+      <select id="periodSelect">
+        <option value="15m">15m</option>
+        <option value="1h">1h</option>
+      </select>
+    </label>
 
-      let resTick = await fetch(API_TICKER24H);
-      let tickers = await resTick.json();
+    <label class="small">Min New Longs (USD):
+      <input id="minNewLongs" type="number" placeholder="0" style="width:130px" />
+    </label>
 
-      let filtered = tickers.filter(t => symbolsAll.includes(t.symbol));
-      filtered.sort((a,b)=> parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume));
+    <label class="small">Min New Shorts (USD):
+      <input id="minNewShorts" type="number" placeholder="0" style="width:130px" />
+    </label>
 
-      // Only USDT pairs, exclude USDC, exclude top 20
-      let symbols = filtered.map(t=>t.symbol).filter(s=>
-        s.endsWith("USDT") &&
-        !s.endsWith("USDC") &&
-        !excludeSymbols.includes(s)
-      );
+    <div id="status">Idle</div>
+  </div>
 
-      return symbols.slice(0,200);
+  <div class="tablewrap" aria-live="polite">
+    <table id="results">
+      <thead>
+        <tr>
+          <th data-key="symbol">Symbol</th>
+          <th data-key="closePct" class="numeric">Close % (1h)</th>
+          <th data-key="volPct" class="numeric">Vol % (1h)</th>
+          <th data-key="deltaOI" class="numeric">Δ OI (USD)</th>
+          <th data-key="deltaOIpct" class="numeric">Δ OI %</th>
+          <th data-key="deltaLongPct" class="numeric">Δ Long % (pp)</th>
+          <th data-key="newLongs" class="numeric">New Longs (USD)</th>
+          <th data-key="newShorts" class="numeric">New Shorts (USD)</th>
+        </tr>
+      </thead>
+      <tbody id="body">
+        <tr><td colspan="8" class="small">Click Refresh to start scan</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+<script>
+/* ======= Config ======= */
+const BASE = 'https://fapi.binance.com';
+const ENDPOINT_KLINES = '/fapi/v1/klines';
+const ENDPOINT_TICKER24 = '/fapi/v1/ticker/24hr';
+const ENDPOINT_EXCHANGE = '/fapi/v1/exchangeInfo';
+const ENDPOINT_OI_HIST = '/futures/data/openInterestHist'; // requires symbol, period, limit
+const ENDPOINT_LS_POS = '/futures/data/topLongShortPositionRatio'; // position-based, use limit=2
+
+const MAX_SYMBOLS = 200;
+const KLINE_HOUR_LIMIT = 3;
+const POLITE_PAUSE_MS = 120;
+
+/* ======= DOM ======= */
+const refreshBtn = document.getElementById('refreshBtn');
+const periodSelect = document.getElementById('periodSelect');
+const statusEl = document.getElementById('status');
+const tbody = document.getElementById('body');
+const minNewLongsInput = document.getElementById('minNewLongs');
+const minNewShortsInput = document.getElementById('minNewShorts');
+
+/* ======= Helpers ======= */
+function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+function isNum(v){ return typeof v === 'number' && Number.isFinite(v); }
+function parseNum(v){ const n = Number(v); return Number.isFinite(n) ? n : NaN; }
+function pct(prev, cur){ if(!isNum(prev) || prev === 0) return NaN; return ((cur - prev) / prev) * 100; }
+function fmtUsd(v){ if(!isNum(v)) return '—'; return (v>=0?'+':'') + Number(v).toLocaleString(undefined, {maximumFractionDigits:2}); }
+function fmtPct(v){ if(!isNum(v)) return '—'; return (v>=0?'+':'') + Number(v).toFixed(2) + '%'; }
+function fmtNum(v,d=2){ if(!isNum(v)) return '—'; return Number(v).toFixed(d); }
+
+/* ======= Fetch wrappers ======= */
+async function fetchJSON(url){ const r = await fetch(url); if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
+
+/* Get top MAX_SYMBOLS by volatility (abs 24h price change %) among USDT perpetuals */
+async function getTopVolatileSymbols(limit=MAX_SYMBOLS){
+  statusEl.textContent = 'Fetching exchange info & 24h tickers...';
+  const [exchangeInfo, tickers] = await Promise.all([
+    fetchJSON(BASE + ENDPOINT_EXCHANGE),
+    fetchJSON(BASE + ENDPOINT_TICKER24)
+  ]);
+  const perpSet = new Set(exchangeInfo.symbols.filter(s=>s.contractType==='PERPETUAL' && s.symbol.endsWith('USDT')).map(s=>s.symbol));
+  const filtered = tickers
+    .filter(t=>perpSet.has(t.symbol) && t.symbol.endsWith('USDT'))
+    .map(t=>({ symbol: t.symbol, change: Math.abs(parseFloat(t.priceChangePercent||0)), quoteVol: parseFloat(t.quoteVolume||0) }))
+    .sort((a,b) => b.change - a.change)
+    .slice(0, limit)
+    .map(x=>x.symbol);
+  return filtered;
+}
+
+/* fetch small number of 1h klines for close% & vol% */
+async function fetch1hKlines(symbol, limit=KLINE_HOUR_LIMIT){
+  const url = `${BASE + ENDPOINT_KLINES}?symbol=${symbol}&interval=1h&limit=${limit}`;
+  return await fetchJSON(url);
+}
+
+/* fetch 2 points of openInterestHist for chosen period */
+async function fetchOIHist(symbol, period='15m'){
+  const url = `${BASE + ENDPOINT_OI_HIST}?symbol=${encodeURIComponent(symbol)}&period=${period}&limit=2`;
+  const r = await fetch(url);
+  if(!r.ok) throw new Error('openInterestHist failed ' + r.status);
+  const arr = await r.json();
+  // Try to sort ascending by timestamp if present
+  arr.sort((a,b)=>{
+    const ta = a.timestamp||a.time||a.t||a.sumOpenInterestValue||0;
+    const tb = b.timestamp||b.time||b.t||b.sumOpenInterestValue||0;
+    return ta - tb;
+  });
+  return arr;
+}
+
+/* fetch 2 points of topLongShortPositionRatio */
+async function fetchLSPosition(symbol, period='15m'){
+  const url = `${BASE + ENDPOINT_LS_POS}?symbol=${encodeURIComponent(symbol)}&period=${period}&limit=2`;
+  const r = await fetch(url);
+  if(!r.ok) throw new Error('topLongShortPositionRatio failed ' + r.status);
+  const arr = await r.json();
+  arr.sort((a,b)=>(a.time||a.buySellRatio||0) - (b.time||b.buySellRatio||0));
+  return arr;
+}
+
+/* extract OI USD value from openInterestHist item */
+function oiValueFromItem(item){
+  if(!item) return NaN;
+  const keys = ['sumOpenInterestValue','sumOpenInterest','sumOpenInterestUsd','sumOpenInterestValueUsd','openInterest','sumOpenInterestValue_usd'];
+  for(const k of keys){
+    if(k in item){
+      const v = parseNum(item[k]);
+      if(!isNaN(v)) return v;
+    }
+  }
+  // try any numeric field
+  for(const k in item){
+    const v = parseNum(item[k]);
+    if(!isNaN(v)) return v;
+  }
+  return NaN;
+}
+
+/* extract long% (0-100) from ls position item */
+function longPctFromLSItem(item){
+  if(!item) return NaN;
+  // preferred: longShortRatio (ratio long/short)
+  if('longShortRatio' in item){
+    const ratio = parseNum(item.longShortRatio);
+    if(!isNaN(ratio)) return (ratio / (1 + ratio)) * 100;
+  }
+  // sometimes field longShortPercent exists (0-1)
+  if('longShortPercent' in item){
+    const p = parseNum(item.longShortPercent);
+    if(!isNaN(p)){
+      if(p <= 1) return p * 100;
+      return p;
+    }
+  }
+  // sometimes names longAccount/shortAccount or longPosition/shortPosition appear
+  if('longPosition' in item && 'shortPosition' in item){
+    const la = parseNum(item.longPosition), sa = parseNum(item.shortPosition);
+    if(!isNaN(la) && !isNaN(sa) && la+sa>0) return (la / (la + sa)) * 100;
+  }
+  if('longAccount' in item && 'shortAccount' in item){
+    const la = parseNum(item.longAccount), sa = parseNum(item.shortAccount);
+    if(!isNaN(la) && !isNaN(sa) && la+sa>0) return (la / (la + sa)) * 100;
+  }
+  // fallback: scan numeric fields and guess
+  for(const k in item){
+    const v = parseNum(item[k]);
+    if(!isNaN(v) && v>=0 && v<=100) return v;
+    if(!isNaN(v) && v>0 && v<=1) return v*100;
+  }
+  return NaN;
+}
+
+/* ======= Estimation logic (corrected) =======
+   Use previous & current LS% and previous & current OI to estimate new longs/shorts (USD).
+   Algorithm:
+   - deltaOI = oiCurr - oiPrev
+   - deltaLongPct = longCurrPct - longPrevPct (percentage points)
+   - avgLongFrac = (longPrevPct + longCurrPct)/200  (fraction)
+   - If deltaOI > 0:
+       * if deltaLongPct > 0:
+           newLongs_direct = deltaOI * (deltaLongPct/100)   // amount attributable to growing long share
+       * else if deltaLongPct < 0:
+           newShorts_direct = deltaOI * (-deltaLongPct/100)
+       * remainder = deltaOI - (direct amounts)
+       * distribute remainder according to avgLongFrac
+   - If deltaOI < 0: treat similarly (negative numbers meaning closures), allow negative values (closed longs/shorts).
+*/
+function estimateFromDelta(oiPrev, oiCurr, longPrevPct, longCurrPct){
+  const oiP = isNum(oiPrev) ? oiPrev : NaN;
+  const oiC = isNum(oiCurr) ? oiCurr : NaN;
+  const lp = isNum(longPrevPct) ? longPrevPct : NaN;
+  const lc = isNum(longCurrPct) ? longCurrPct : NaN;
+
+  const deltaOI = (isNum(oiC) && isNum(oiP)) ? (oiC - oiP) : NaN;
+  const deltaOIpct = (isNum(oiP) && oiP !== 0) ? ((oiC - oiP) / oiP) * 100 : NaN;
+  const deltaLongPct = (isNum(lp) && isNum(lc)) ? (lc - lp) : NaN;
+  const avgLongFrac = (isNum(lp) && isNum(lc)) ? ((lp + lc) / 200) : NaN; // fraction 0..1
+
+  let newLongs = NaN, newShorts = NaN;
+
+  if(!isNaN(deltaOI) && isNum(deltaOI) && !isNaN(avgLongFrac)){
+    // direct attribution
+    let directLong = 0, directShort = 0;
+    if(deltaOI > 0){
+      if(deltaLongPct > 0) directLong = deltaOI * (deltaLongPct / 100);
+      else if(deltaLongPct < 0) directShort = deltaOI * (-deltaLongPct / 100);
+    } else if(deltaOI < 0){
+      // closures: if deltaLongPct < 0 -> longs reduced share -> more long closures; if >0, shorts closed more
+      if(deltaLongPct < 0) directLong = deltaOI * (Math.abs(deltaLongPct) / 100); // deltaOI negative
+      else if(deltaLongPct > 0) directShort = deltaOI * (Math.abs(deltaLongPct) / 100);
     }
 
-    async function fetchKlines(symbol, interval="15m", limit=5) {
-      let url = `${API_KLINES}?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-      let res = await fetch(url);
-      return res.json();
-    }
+    // remainder to distribute
+    const allocated = Math.abs(directLong) + Math.abs(directShort);
+    let remainder = Math.abs(deltaOI) - allocated;
+    if(remainder < 0) remainder = 0;
 
-    async function checkSymbol(symbol) {
+    // distribute remainder by average long fraction (use sign of deltaOI)
+    const repartLong = remainder * avgLongFrac;
+    const repartShort = remainder * (1 - avgLongFrac);
+
+    // Combine and restore sign based on deltaOI sign
+    if(deltaOI >= 0){
+      newLongs = (directLong >= 0 ? directLong : 0) + repartLong;
+      newShorts = (directShort >= 0 ? directShort : 0) + repartShort;
+    } else {
+      // deltaOI negative -> closed positions (we keep negative sign to indicate net removal)
+      newLongs = - ( (Math.abs(directLong) >= 0 ? Math.abs(directLong) : 0) + repartLong );
+      newShorts = - ( (Math.abs(directShort) >= 0 ? Math.abs(directShort) : 0) + repartShort );
+    }
+  }
+  return { deltaOI, deltaOIpct, deltaLongPct, newLongs, newShorts };
+}
+
+/* ======= Rendering helpers ======= */
+function clearTable(){ tbody.innerHTML = '<tr><td colspan="8" class="small">Click Refresh to start scan</td></tr>'; }
+function appendRow(obj){
+  const tr = document.createElement('tr'); tr.className = 'match';
+  tr.innerHTML = `
+    <td>${obj.symbol}</td>
+    <td class="numeric">${fmtPct(obj.closePct)}</td>
+    <td class="numeric">${fmtPct(obj.volPct)}</td>
+    <td class="numeric">${isNum(obj.deltaOI) ? obj.deltaOI.toLocaleString() : '—'}</td>
+    <td class="numeric">${isNum(obj.deltaOIpct) ? (obj.deltaOIpct>=0?'+':'')+obj.deltaOIpct.toFixed(2)+'%' : '—'}</td>
+    <td class="numeric">${isNum(obj.deltaLongPct) ? (obj.deltaLongPct>=0?'+':'')+obj.deltaLongPct.toFixed(2)+'pp' : '—'}</td>
+    <td class="numeric">${isNum(obj.newLongs) ? (obj.newLongs>=0?'+':'')+Number(obj.newLongs).toLocaleString(undefined,{maximumFractionDigits:2}) : '—'}</td>
+    <td class="numeric">${isNum(obj.newShorts) ? (obj.newShorts>=0?'+':'')+Number(obj.newShorts).toLocaleString(undefined,{maximumFractionDigits:2}) : '—'}</td>
+  `;
+  tbody.appendChild(tr);
+}
+
+/* ======= Main scanner ======= */
+async function runScan(){
+  try{
+    clearTable();
+    results = [];
+    const minNL = parseFloat(minNewLongsInput.value) || 0;
+    const minNS = parseFloat(minNewShortsInput.value) || 0;
+    const period = periodSelect.value || '15m';
+
+    statusEl.textContent = 'Building top volatile list...';
+    const universe = await getTopVolatileSymbols(MAX_SYMBOLS);
+    statusEl.textContent = `Scanning 0 / ${universe.length}`;
+
+    let idx = 0;
+    for(const sym of universe){
+      idx++;
+      statusEl.textContent = `Scanning ${idx} / ${universe.length}: ${sym}`;
       try {
-        let klines = await fetchKlines(symbol);
-        if (!klines || klines.length < 3) return null;
+        // fetch 1h klines
+        const kl = await fetch1hKlines(sym, KLINE_HOUR_LIMIT);
+        if(!kl || kl.length < 2) { await sleep(POLITE_PAUSE_MS); continue; }
+        const last = kl[kl.length-1], prev = kl[kl.length-2];
+        const lastClose = parseNum(last[4]), prevClose = parseNum(prev[4]);
+        const lastVol = parseNum(last[5]), prevVol = parseNum(prev[5]);
 
-        let last = klines.length-1;
-        let prev = last-1;
-        let prevprev = last-2;
+        const closePct = (isNum(prevClose) && isNum(lastClose)) ? pct(prevClose, lastClose) : NaN;
+        const volPct = (isNum(prevVol) && isNum(lastVol)) ? pct(prevVol, lastVol) : NaN;
 
-        let openCurr = parseFloat(klines[last][1]);
-        let closeCurr = parseFloat(klines[last][4]);
-        let volCurr = parseFloat(klines[last][5]);
+        // fetch OI hist
+        let oiArr = [];
+        try { oiArr = await fetchOIHist(sym, period); } catch(e){ oiArr = []; }
+        if(!oiArr || oiArr.length < 2){ await sleep(POLITE_PAUSE_MS); continue; }
+        const oiPrev = oiValueFromItem(oiArr[0]);
+        const oiCurr = oiValueFromItem(oiArr[1]);
 
-        let openPrev = parseFloat(klines[prev][1]);
-        let closePrev = parseFloat(klines[prev][4]);
-        let volPrev = parseFloat(klines[prev][5]);
+        // fetch LS position ratio
+        let lsArr = [];
+        try { lsArr = await fetchLSPosition(sym, period); } catch(e) { lsArr = []; }
+        if(!lsArr || lsArr.length < 2){ await sleep(POLITE_PAUSE_MS); continue; }
+        const longPrevPct = longPctFromLSItem(lsArr[0]);
+        const longCurrPct = longPctFromLSItem(lsArr[1]);
 
-        let openPrevPrev = parseFloat(klines[prevprev][1]);
-        let closePrevPrev = parseFloat(klines[prevprev][4]);
+        // estimate new longs/shorts using delta logic
+        const est = estimateFromDelta(oiPrev, oiCurr, longPrevPct, longCurrPct);
 
-        // Candle colour
-        let currGreen = closeCurr > openCurr;
-        if (!currGreen) return null; // Condition (1)
-
-        let prevGreen = closePrev > openPrev ? "Green" : "Red";
-
-        // Close % changes
-        let currChg = ((closeCurr - openCurr) / openCurr) * 100;
-        let prevChg = ((closePrev - openPrev) / openPrev) * 100;
-        let prevPrevChg = ((closePrevPrev - openPrevPrev) / openPrevPrev) * 100;
-
-        // Condition (2): curr > abs(prev & prevprev)
-        if (!(currChg > Math.abs(prevChg) && currChg > Math.abs(prevPrevChg))) return null;
-
-        // Extra metrics
-        let moreThanPrev = prevChg !== 0 ? ((currChg / Math.abs(prevChg)) * 100).toFixed(1) + "%" : "∞";
-        let volChg = ((volCurr - volPrev) / volPrev) * 100;
-
-        return {
-          symbol,
-          currChg: currChg.toFixed(2)+"%",
-          moreThanPrev,
-          prevColor: prevGreen,
-          volChg: volChg.toFixed(2)+"%"
+        const obj = {
+          symbol: sym,
+          closePct, volPct,
+          deltaOI: est.deltaOI,
+          deltaOIpct: est.deltaOIpct,
+          deltaLongPct: est.deltaLongPct,
+          newLongs: est.newLongs,
+          newShorts: est.newShorts
         };
-      } catch(e) {
-        console.error(symbol, e);
-        return null;
+
+        // apply filters
+        const pass = ( (!isNum(obj.newLongs) || Math.abs(obj.newLongs) >= minNL) && (!isNum(obj.newShorts) || Math.abs(obj.newShorts) >= minNS) );
+        if(pass){
+          results.push(obj);
+          appendRow(obj);
+        }
+
+      } catch(symErr){
+        // ignore symbol error
       }
+      await sleep(POLITE_PAUSE_MS);
     }
 
-    async function refreshData() {
-      document.querySelector("tbody").innerHTML = "<tr><td colspan='5'>Loading symbols...</td></tr>";
-      document.getElementById("status").innerText = "Fetching top 200 symbols...";
-      let symbols = await fetchSymbols();
+    statusEl.textContent = `Scan complete — ${results.length} rows.`;
+  } catch(err){
+    console.error(err);
+    statusEl.textContent = 'Error: ' + (err.message || err);
+    tbody.innerHTML = '<tr><td colspan="8" class="small">Error — check console</td></tr>';
+  }
+}
 
-      let results = [];
-      for (let i=0;i<symbols.length;i++) {
-        document.getElementById("status").innerText = `Scanning ${i+1}/${symbols.length}: ${symbols[i]}`;
-        let row = await checkSymbol(symbols[i]);
-        if (row) results.push(row);
-      }
+/* ======= Sorting by header click ======= */
+function compare(a,b,asc=true){
+  const an = parseFloat(a.replace(/[%+,pp]/g,'').replace(/,/g,'')); // attempt numeric
+  const bn = parseFloat(b.replace(/[%+,pp]/g,'').replace(/,/g,''));
+  const na = isNaN(an);
+  const nb = isNaN(bn);
+  if(!na && !nb) return asc ? an - bn : bn - an;
+  if(na && nb) return asc ? a.localeCompare(b) : b.localeCompare(a);
+  return na ? 1 : -1;
+}
 
-      let tbody = document.querySelector("tbody");
-      tbody.innerHTML = "";
-      if (results.length === 0) {
-        tbody.innerHTML = "<tr><td colspan='5'>No matches found</td></tr>";
-      } else {
-        results.forEach(r=>{
-          tbody.innerHTML += `<tr>
-            <td>${r.symbol}</td>
-            <td>${r.currChg}</td>
-            <td>${r.moreThanPrev}</td>
-            <td class="${r.prevColor==='Green'?'green':'red'}">${r.prevColor}</td>
-            <td>${r.volChg}</td>
-          </tr>`;
-        });
-      }
-      document.getElementById("status").innerText = "Scan complete";
-    }
+document.querySelectorAll('#results thead th').forEach((th, idx) => {
+  th.addEventListener('click', () => {
+    const table = document.getElementById('results');
+    const tbodyEl = table.tBodies[0];
+    const rows = Array.from(tbodyEl.rows);
+    const current = table.getAttribute('data-sort-col');
+    let dir = table.getAttribute('data-sort-dir') || 'desc';
+    if(String(current) === String(idx)) dir = dir === 'asc' ? 'desc' : 'asc';
+    const asc = dir === 'asc';
+    rows.sort((r1,r2)=> {
+      const a = r1.cells[idx].innerText.trim();
+      const b = r2.cells[idx].innerText.trim();
+      return compare(a,b,asc);
+    });
+    rows.forEach(r => tbodyEl.appendChild(r));
+    table.setAttribute('data-sort-col', idx);
+    table.setAttribute('data-sort-dir', dir);
+  });
+});
 
-    function sortTable(col) {
-      let table = document.getElementById("screener");
-      let rows = Array.from(table.rows).slice(1);
-      let asc = table.getAttribute("data-sort-col")==col && table.getAttribute("data-sort-dir")=="asc" ? false : true;
-      rows.sort((a,b)=>{
-        let x = a.cells[col].innerText.replace("%","");
-        let y = b.cells[col].innerText.replace("%","");
-        if (isNaN(x) || isNaN(y)) return asc ? x.localeCompare(y) : y.localeCompare(x);
-        return asc ? x-y : y-x;
-      });
-      rows.forEach(r=>table.tBodies[0].appendChild(r));
-      table.setAttribute("data-sort-col", col);
-      table.setAttribute("data-sort-dir", asc ? "asc":"desc");
-    }
+/* ======= Wire ======= */
+refreshBtn.addEventListener('click', () => {
+  tbody.innerHTML = '<tr><td colspan="8" class="small">Starting scan…</td></tr>';
+  runScan();
+});
 
-    // Run on page load
-    refreshData();
-  </script>
+window.addEventListener('load', () => clearTable());
+
+</script>
 </body>
 </html>

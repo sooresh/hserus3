@@ -4,155 +4,158 @@
   <meta charset="UTF-8">
   <title>hserus3</title>
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      background: #0d1117;
-      color: #e6edf3;
-      margin: 0;
-      padding: 20px;
-    }
-    h2 { text-align: center; margin-bottom: 20px; }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 10px;
-    }
-    th, td {
-      border: 1px solid #30363d;
-      padding: 6px 10px;
-      text-align: right;
-    }
-    th {
-      background: #161b22;
-      position: sticky;
-      top: 0;
-    }
-    tr:nth-child(even) { background: #161b22; }
-    tr:hover { background: #21262d; }
-    td.symbol { text-align: left; font-weight: bold; color: #58a6ff; }
-    .positive { color: #3fb950; }
-    .negative { color: #f85149; }
+    body { background:#111; color:#eee; font-family:Arial, sans-serif; }
+    h2 { text-align:center; margin:15px 0; }
+    #controls { text-align:center; margin-bottom:10px; }
+    button { padding:6px 12px; background:#007bff; color:white; border:none; border-radius:4px; cursor:pointer; }
+    button:hover { background:#0056b3; }
+    #progress { text-align:center; margin:10px; font-size:14px; }
+    table { width:95%; margin:0 auto; border-collapse:collapse; font-size:14px; }
+    th, td { border:1px solid #444; padding:6px 8px; text-align:center; }
+    th { cursor:pointer; background:#222; }
+    tr:nth-child(even) { background:#1a1a1a; }
+    .green { color:#0f0; }
+    .red { color:#f33; }
   </style>
 </head>
 <body>
   <h2>hserus3</h2>
-  <table id="data-table">
+  <div id="controls">
+    <button onclick="startScan()">🔄 Refresh Data</button>
+  </div>
+  <div id="progress"></div>
+  <table id="scannerTable">
     <thead>
       <tr>
-        <th>Symbol</th>
-        <th>Close %</th>
-        <th>Vol %</th>
-        <th>OI Δ</th>
-        <th>Long Ratio</th>
-        <th>New Longs</th>
-        <th>New Shorts</th>
+        <th onclick="sortTable(0)">Symbol</th>
+        <th onclick="sortTable(1)">Close %</th>
+        <th onclick="sortTable(2)">Vol %</th>
+        <th onclick="sortTable(3)">OI Δ</th>
+        <th onclick="sortTable(4)">Long Ratio</th>
+        <th onclick="sortTable(5)">New Longs</th>
+        <th onclick="sortTable(6)">New Shorts</th>
       </tr>
     </thead>
     <tbody></tbody>
   </table>
 
-  <script>
-    async function getTop200Symbols() {
-      try {
-        // 1. Fetch exchange info to get all USDT perpetuals
-        const exchangeInfo = await fetch("https://fapi.binance.com/fapi/v1/exchangeInfo").then(r => r.json());
-        let usdtSymbols = exchangeInfo.symbols
-          .filter(s => s.contractType === "PERPETUAL" && s.symbol.endsWith("USDT") && !s.symbol.includes("USDC"))
-          .map(s => s.symbol);
+<script>
+const BASE = "https://fapi.binance.com";
+let lastData = {}; // memory for previous OI/ratios
+let sortDir = true;
 
-        // 2. Fetch 24h stats
-        const stats = await fetch("https://fapi.binance.com/fapi/v1/ticker/24hr").then(r => r.json());
-        let statsMap = {};
-        stats.forEach(s => { statsMap[s.symbol] = s; });
+async function fetchJSON(url) {
+  const r = await fetch(url);
+  return r.json();
+}
 
-        // 3. Score each symbol
-        let scored = usdtSymbols.map(sym => {
-          let st = statsMap[sym];
-          if (!st) return null;
-          let vol = parseFloat(st.quoteVolume || 0);
-          let pct = Math.abs(parseFloat(st.priceChangePercent || 0));
-          return { symbol: sym, score: vol * pct };
-        }).filter(x => x);
+async function getSymbols() {
+  let data = await fetchJSON(BASE + "/fapi/v1/exchangeInfo");
+  return data.symbols
+    .filter(s => s.contractType === "PERPETUAL" && s.symbol.endsWith("USDT"))
+    .map(s => s.symbol)
+    .slice(0,200); // top 200
+}
 
-        // 4. Sort and take top 200
-        scored.sort((a, b) => b.score - a.score);
-        let top200 = scored.slice(0, 200).map(x => x.symbol);
+async function getKlines(symbol) {
+  let url = `${BASE}/fapi/v1/klines?symbol=${symbol}&interval=1h&limit=2`;
+  return fetchJSON(url);
+}
 
-        // 5. Exclude top 30 global market cap coins
-        const excluded = [
-          "BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","DOGEUSDT",
-          "AVAXUSDT","TRXUSDT","DOTUSDT","MATICUSDT","SHIBUSDT","LINKUSDT","BCHUSDT",
-          "LTCUSDT","ICPUSDT","ETCUSDT","UNIUSDT","XLMUSDT","APTUSDT",
-          "NEARUSDT","FILUSDT","HBARUSDT","VETUSDT","MNTUSDT","RNDRUSDT",
-          "ARBUSDT","OPUSDT","AAVEUSDT","GRTUSDT"
-        ];
-        top200 = top200.filter(sym => !excluded.includes(sym));
+async function getOpenInterest(symbol) {
+  let url = `${BASE}/fapi/v1/openInterest?symbol=${symbol}`;
+  return fetchJSON(url);
+}
 
-        return top200;
-      } catch (e) {
-        console.error("Error fetching top200 symbols:", e);
-        return [];
-      }
-    }
+async function getLongShortRatio(symbol) {
+  let url = `${BASE}/futures/data/globalLongShortAccountRatio?symbol=${symbol}&period=1h&limit=2`;
+  return fetchJSON(url);
+}
 
-    // Storage for last values
-    let lastData = {};
+function calcNewLongs(oiChange,longRatio,ratioChange,oi) {
+  if(!oiChange || !longRatio) return [0,0];
+  let newLongs = (ratioChange/100)*oi + (longRatio/100)*oiChange;
+  let newShorts = oiChange - newLongs;
+  return [newLongs,newShorts];
+}
 
-    async function fetchData() {
-      const symbols = await getTop200Symbols();
-      const tableBody = document.querySelector("#data-table tbody");
-      tableBody.innerHTML = "";
+async function scanSymbol(symbol) {
+  try {
+    let [klines,oiData,lsData] = await Promise.all([
+      getKlines(symbol), getOpenInterest(symbol), getLongShortRatio(symbol)
+    ]);
 
-      for (const symbol of symbols) {
-        try {
-          // Open Interest
-          const oiData = await fetch(`https://fapi.binance.com/fapi/v1/openInterest?symbol=${symbol}`).then(r => r.json());
-          let oi = parseFloat(oiData.openInterest);
+    let prevClose = parseFloat(klines[0][4]);
+    let currClose = parseFloat(klines[1][4]);
+    let prevVol = parseFloat(klines[0][5]);
+    let currVol = parseFloat(klines[1][5]);
+    let closeChg = ((currClose - prevClose)/prevClose*100).toFixed(2);
+    let volChg = ((currVol - prevVol)/prevVol*100).toFixed(2);
 
-          // Long/Short ratio
-          const ratioData = await fetch(`https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=${symbol}&period=5m&limit=2`).then(r => r.json());
-          let longRatio = ratioData.length > 0 ? parseFloat(ratioData[ratioData.length - 1].longAccount) * 100 : 50;
+    let currOI = parseFloat(oiData.openInterest);
+    let prevOI = lastData[symbol]?.oi || currOI;
+    let oiChange = currOI - prevOI;
 
-          // 24h stats for close% and volume%
-          const ticker = await fetch(`https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=${symbol}`).then(r => r.json());
-          let closeChange = parseFloat(ticker.priceChangePercent || 0);
-          let volChange = parseFloat(ticker.volume || 0);
+    let longRatio = parseFloat(lsData[lsData.length-1].longAccount);
+    let prevRatio = lastData[symbol]?.ratio || longRatio;
+    let ratioChange = longRatio - prevRatio;
 
-          // Previous data
-          let prev = lastData[symbol] || { oi: oi, longRatio: longRatio };
+    let [newLongs,newShorts] = calcNewLongs(oiChange,longRatio,ratioChange,currOI);
 
-          // Changes
-          let oiChange = oi - prev.oi;
-          let ratioChange = longRatio - prev.longRatio;
+    lastData[symbol] = {oi:currOI, ratio:longRatio};
 
-          // Distribution
-          let newLongs = (ratioChange / 100) * oi + (longRatio / 100) * oiChange;
-          let newShorts = oiChange - newLongs;
+    return {
+      symbol,
+      closeChg, volChg,
+      oiChange: oiChange.toFixed(2),
+      longRatio: (longRatio*100).toFixed(2)+"%",
+      newLongs: newLongs.toFixed(2),
+      newShorts: newShorts.toFixed(2)
+    };
+  } catch(e) {
+    console.error("Error for",symbol,e);
+    return null;
+  }
+}
 
-          // Save
-          lastData[symbol] = { oi, longRatio };
+async function startScan() {
+  document.querySelector("#progress").innerText = "Starting scan...";
+  let symbols = await getSymbols();
+  let tbody = document.querySelector("#scannerTable tbody");
+  tbody.innerHTML = "";
 
-          // Row
-          const row = document.createElement("tr");
-          row.innerHTML = `
-            <td class="symbol">${symbol}</td>
-            <td class="${closeChange >= 0 ? "positive" : "negative"}">${closeChange.toFixed(2)}%</td>
-            <td>${volChange.toFixed(2)}</td>
-            <td class="${oiChange >= 0 ? "positive" : "negative"}">${oiChange.toFixed(2)}</td>
-            <td>${longRatio.toFixed(2)}%</td>
-            <td class="${newLongs >= 0 ? "positive" : "negative"}">${newLongs.toFixed(2)}</td>
-            <td class="${newShorts >= 0 ? "positive" : "negative"}">${newShorts.toFixed(2)}</td>
-          `;
-          tableBody.appendChild(row);
-        } catch (err) {
-          console.error("Error for symbol", symbol, err);
-        }
-      }
-    }
+  let results = [];
+  for(let i=0;i<symbols.length;i++) {
+    document.querySelector("#progress").innerText = `Scanning ${i+1} of ${symbols.length}...`;
+    let data = await scanSymbol(symbols[i]);
+    if(data) results.push(data);
+  }
 
-    // Refresh every 60s
-    fetchData();
-    setInterval(fetchData, 60000);
-  </script>
+  tbody.innerHTML = results.map(r => `
+    <tr>
+      <td style="color:#4af">${r.symbol}</td>
+      <td class="${r.closeChg>=0?"green":"red"}">${r.closeChg}%</td>
+      <td class="${r.volChg>=0?"green":"red"}">${r.volChg}%</td>
+      <td class="${r.oiChange>=0?"green":"red"}">${r.oiChange}</td>
+      <td>${r.longRatio}</td>
+      <td class="${r.newLongs>=0?"green":"red"}">${r.newLongs}</td>
+      <td class="${r.newShorts>=0?"green":"red"}">${r.newShorts}</td>
+    </tr>`).join("");
+
+  document.querySelector("#progress").innerText = `Scan complete — ${results.length} rows.`;
+}
+
+function sortTable(n) {
+  let table=document.getElementById("scannerTable"),rows=[...table.rows].slice(1);
+  let dir=sortDir?1:-1; sortDir=!sortDir;
+  rows.sort((a,b)=>{
+    let x=a.cells[n].innerText.replace(/[%]/g,"");
+    let y=b.cells[n].innerText.replace(/[%]/g,"");
+    return (parseFloat(x)||0 - parseFloat(y)||0)*dir;
+  });
+  let tbody=table.tBodies[0]; tbody.innerHTML="";
+  rows.forEach(r=>tbody.appendChild(r));
+}
+</script>
 </body>
 </html>

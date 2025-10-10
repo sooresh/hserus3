@@ -153,7 +153,7 @@ async function startScanner() {
 
       const isGreen = currClose >= parseFloat(curr[1]);
       const colorPrev = candleColor(prev);
-      const colorPrev2 = candleColor(prev2);
+      const colorPrev2 = candleColor(curr);
 
       // Conditions
       if (currVol <= prevVol) continue; // skip if vol not increased
@@ -233,3 +233,4 @@ function sortTable(n) {
 
 </body>
 </html>
+

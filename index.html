@@ -201,36 +201,47 @@ async function startScanner() {
 }
 
 // Sorting function
-function sortTable(n) {
-  const table = document.getElementById("scannerTable");
-  let switching = true, dir = "asc", switchcount = 0;
-  while (switching) {
-    switching = false;
-    const rows = table.rows;
-    for (let i = 1; i < (rows.length - 1); i++) {
-      let shouldSwitch = false;
-      const x = rows[i].getElementsByTagName("TD")[n];
-      const y = rows[i + 1].getElementsByTagName("TD")[n];
-      let xVal = isNaN(x.innerText) ? x.innerText.toLowerCase() : parseFloat(x.innerText);
-      let yVal = isNaN(y.innerText) ? y.innerText.toLowerCase() : parseFloat(y.innerText);
-      if (dir === "asc" ? xVal > yVal : xVal < yVal) {
-        shouldSwitch = true;
-        break;
-      }
-    if (shouldSwitch) break;
+function sortTable(colIndex) {
+  const table = document.getElementById('scannerTable');
+  const tbody = table.tBodies[0];
+  if (!tbody) return;
+
+  // Keep sort direction per column on the table element
+  table._sortDir = table._sortDir || {};
+  const key = 'col' + colIndex;
+  const dir = table._sortDir[key] === 'asc' ? 'desc' : 'asc';
+  table._sortDir[key] = dir;
+
+  // Get rows as array (only body rows)
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+
+  rows.sort((rowA, rowB) => {
+    let a = (rowA.cells[colIndex] && rowA.cells[colIndex].innerText) ? rowA.cells[colIndex].innerText.trim() : '';
+    let b = (rowB.cells[colIndex] && rowB.cells[colIndex].innerText) ? rowB.cells[colIndex].innerText.trim() : '';
+
+    // Normalize numbers like "+1.23%", "1,234.56", "+3,456", etc.
+    const norm = s => s.replace(/[,%\+\s]/g, '');
+    const aNum = parseFloat(norm(a));
+    const bNum = parseFloat(norm(b));
+    const aIsNum = !Number.isNaN(aNum);
+    const bIsNum = !Number.isNaN(bNum);
+
+    let cmp = 0;
+    if (aIsNum && bIsNum) {
+      cmp = aNum - bNum;
+    } else {
+      // fallback to string compare (case-insensitive)
+      cmp = a.localeCompare(b, undefined, {sensitivity: 'base', numeric: true});
     }
-    if (shouldSwitch) {
-      rows[i].parentNode.insertBefore(rows[i + 1], rows[i]);
-      switching = true;
-      switchcount++;
-    } else if (switchcount === 0 && dir === "asc") {
-      dir = "desc";
-      switching = true;
-    }
-  }
+    return dir === 'asc' ? cmp : -cmp;
+  });
+
+  // Re-attach rows in sorted order
+  rows.forEach(r => tbody.appendChild(r));
 }
 </script>
 
 </body>
 </html>
+
 

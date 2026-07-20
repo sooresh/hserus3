@@ -1,247 +1,343 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>hserus3</title>
-<style>
-body {
-  font-family: Arial, sans-serif;
-  background: #0b0c10;
-  color: #fff;
-  margin: 0;
-  padding: 20px;
-}
-h2 { text-align: center; margin-bottom: 10px; }
-button {
-  background: #1f8ef1;
-  color: white;
-  border: none;
-  padding: 10px 18px;
-  border-radius: 6px;
-  cursor: pointer;
-  margin-bottom: 15px;
-}
-button:hover { background: #0d6efd; }
-#progress { margin: 10px 0; font-size: 14px; text-align: center; }
-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 10px;
-}
-th, td {
-  padding: 8px 10px;
-  text-align: center;
-  border-bottom: 1px solid #333;
-}
-th {
-  cursor: pointer;
-  background: #1a1a1a;
-  color: #00b4d8;
-}
-tr:hover { background: #1f1f1f; }
-.green { color: #00ff9d; }
-.red { color: #ff5c5c; }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>hserus3</title>
+    <style>
+        /* Modern Dark Theme (Crypto Style) */
+        :root {
+            --bg-color: #0b0e11;
+            --card-bg: #181a20;
+            --text-main: #eaecef;
+            --text-muted: #848e9c;
+            --primary: #fcd535;
+            --primary-hover: #e0bd2e;
+            --green: #0ecb81;
+            --red: #f6465d;
+            --border: #2b3139;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .container {
+            background-color: var(--card-bg);
+            padding: 30px;
+            border-radius: 8px;
+            width: 100%;
+            max-width: 900px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        h1 {
+            margin-top: 0;
+            font-size: 24px;
+            text-align: center;
+        }
+
+        .controls {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 20px;
+        }
+
+        button {
+            background-color: var(--primary);
+            color: #000;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            font-weight: bold;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        button:hover {
+            background-color: var(--primary-hover);
+        }
+
+        button:disabled {
+            background-color: var(--text-muted);
+            cursor: not-allowed;
+        }
+
+        .progress-container {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .progress-text {
+            margin-bottom: 8px;
+            font-size: 14px;
+            color: var(--text-muted);
+        }
+
+        .progress-bar-bg {
+            width: 100%;
+            background-color: var(--border);
+            border-radius: 4px;
+            height: 12px;
+            overflow: hidden;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            background-color: var(--primary);
+            width: 0%;
+            transition: width 0.2s;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+
+        th, td {
+            padding: 12px 15px;
+            text-align: right;
+            border-bottom: 1px solid var(--border);
+        }
+
+        th:first-child, td:first-child {
+            text-align: left;
+        }
+
+        th {
+            color: var(--text-muted);
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        .sortable {
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .sortable:hover {
+            color: var(--text-main);
+        }
+
+        .sort-icon {
+            font-size: 12px;
+            margin-left: 5px;
+        }
+
+        .green { color: var(--green); }
+        .red { color: var(--red); }
+        .empty-state { text-align: center; color: var(--text-muted); padding: 20px; }
+    </style>
 </head>
 <body>
 
-<h2>hserus3</h2>
-<div style="text-align:center;">
-  <button onclick="startScanner()">🔄 Refresh</button>
-</div>
-<div id="progress"></div>
+<div class="container">
+    <h1>hserus3</h1>
+    
+    <div class="controls">
+        <button id="startBtn" onclick="startScanner()">Start Scan</button>
+    </div>
 
-<table id="scannerTable">
-  <thead>
-    <tr>
-      <th onclick="sortTable(0)">Symbol</th>
-      <th onclick="sortTable(1)">Close%</th>
-      <th onclick="sortTable(2)">Vol%</th>
-      <th onclick="sortTable(3)">BB Check</th>
-      <th onclick="sortTable(4)">SameClr</th>
-      <th onclick="sortTable(5)">MidBand</th>
-    </tr>
-  </thead>
-  <tbody></tbody>
-</table>
+    <div class="progress-container" id="progressContainer">
+        <div class="progress-text" id="progressText">Initializing scan...</div>
+        <div class="progress-bar-bg">
+            <div class="progress-bar-fill" id="progressBar"></div>
+        </div>
+    </div>
+
+    <table id="resultsTable">
+        <thead>
+            <tr>
+                <th>Symbol Name</th>
+                <th class="sortable" onclick="sortTable('curr_chg')">Current Chg (%) <span class="sort-icon" id="icon_curr_chg">↕</span></th>
+                <th class="sortable" onclick="sortTable('prev_chg')">Previous Chg (%) <span class="sort-icon" id="icon_prev_chg">↕</span></th>
+                <th class="sortable" onclick="sortTable('pp_chg')">Prev-Prev Chg (%) <span class="sort-icon" id="icon_pp_chg">↕</span></th>
+            </tr>
+        </thead>
+        <tbody id="tableBody">
+            <tr><td colspan="4" class="empty-state">Click "Start Market Scan" to begin.</td></tr>
+        </tbody>
+    </table>
+</div>
 
 <script>
-const API_BASE = "https://fapi.binance.com/fapi/v1";
+    const API_BASE = 'https://api.binance.com/api/v3';
+    const TIMEFRAME = '1h';
+    const TOP_N_SYMBOLS = 250;
+    const BATCH_SIZE = 10;
+    
+    let scanResults = [];
+    let currentSortColumn = 'curr_chg';
+    let isSortDescending = true;
 
-async function getSymbols() {
-  const res = await fetch(`${API_BASE}/exchangeInfo`);
-  const data = await res.json();
-  return data.symbols
-    .filter(s => s.symbol.endsWith("USDT") && !s.symbol.includes("BUSD") && s.contractType === "PERPETUAL")
-    .map(s => s.symbol);
-}
+    // Elements
+    const startBtn = document.getElementById('startBtn');
+    const progressContainer = document.getElementById('progressContainer');
+    const progressText = document.getElementById('progressText');
+    const progressBar = document.getElementById('progressBar');
+    const tableBody = document.getElementById('tableBody');
 
-// Simple volatility sort using 24h price change abs value
-async function getTopVolatileSymbols(limit = 250) {
-  const res = await fetch(`${API_BASE}/ticker/24hr`);
-  const data = await res.json();
-  let usdt = data.filter(x => x.symbol.endsWith("USDT") && x.contractType !== "CURRENT_QUARTER");
-  usdt.sort((a,b) => Math.abs(parseFloat(b.priceChangePercent)) - Math.abs(parseFloat(a.priceChangePercent)));
-  return usdt.slice(0, limit).map(x => x.symbol);
-}
+    async function startScanner() {
+        startBtn.disabled = true;
+        progressContainer.style.display = 'flex';
+        tableBody.innerHTML = '';
+        scanResults = [];
+        
+        try {
+            // 1. Fetch all symbols and sort by active 24h quote volume to get top 250
+            progressText.innerText = "Fetching market volume data from Binance...";
+            const tickerRes = await fetch(`${API_BASE}/ticker/24hr`);
+            const tickerData = await tickerRes.json();
+            
+            // Filter USDT pairs and sort by Quote Volume (USDT value traded)
+            const symbols = tickerData
+                .filter(item => item.symbol.endsWith('USDT'))
+                .sort((a, b) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
+                .slice(0, TOP_N_SYMBOLS)
+                .map(item => item.symbol);
 
-function calculateBB(values, period = 20, multiplier = 2) {
-  if (values.length < period) return null;
-  const slice = values.slice(-period);
-  const avg = slice.reduce((a,b)=>a+b,0)/period;
-  const variance = slice.reduce((a,b)=>a+Math.pow(b-avg,2),0)/period;
-  const stdDev = Math.sqrt(variance);
-  return {
-    upper: avg + multiplier*stdDev,
-    middle: avg,
-    lower: avg - multiplier*stdDev
-  };
-}
+            // 2. Process in Batches of 10
+            let completed = 0;
+            
+            for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
+                const batch = symbols.slice(i, i + BATCH_SIZE);
+                
+                // Fetch klines concurrently for the batch
+                const batchPromises = batch.map(symbol => scanSingleSymbol(symbol));
+                const results = await Promise.all(batchPromises);
+                
+                // Add matched symbols to our main array
+                results.forEach(res => {
+                    if (res !== null) scanResults.push(res);
+                });
 
-function candleColor(c) {
-  return c.close >= c.open ? "green" : "red";
-}
+                // Update UI Progress
+                completed += batch.length;
+                const percentage = Math.round((completed / symbols.length) * 100);
+                progressText.innerText = `Scanning markets... ${completed} / ${symbols.length} (${percentage}%)`;
+                progressBar.style.width = `${percentage}%`;
+                
+                // Tiny delay to respect Binance REST API limits (prevent IP ban)
+                await new Promise(resolve => setTimeout(resolve, 150));
+            }
+            
+            progressText.innerText = `Scan Complete! Found ${scanResults.length} matching patterns.`;
+            sortTable(currentSortColumn, true); // Render final sorted results
 
-async function getKlines(symbol) {
-  const url = `${API_BASE}/klines?symbol=${symbol}&interval=1h&limit=22`;
-  const res = await fetch(url);
-  return await res.json();
-}
-
-function percentChange(curr, prev) {
-  return ((curr - prev)/prev) * 100;
-}
-
-async function startScanner() {
-  const tableBody = document.querySelector("#scannerTable tbody");
-  tableBody.innerHTML = "";
-  document.getElementById("progress").textContent = "Fetching symbols...";
-  
-  const symbols = await getTopVolatileSymbols(250);
-  let results = [];
-
-  let count = 0;
-  for (let sym of symbols) {
-    count++;
-    document.getElementById("progress").textContent = `Scanning ${count} of ${symbols.length} (${sym})`;
-    try {
-      const data = await getKlines(sym);
-      if (!data || data.length < 21) continue;
-
-      const closes = data.map(x => parseFloat(x[4]));
-      const vols = data.map(x => parseFloat(x[5]));
-      const bb = calculateBB(closes);
-      const prevBB = calculateBB(closes.slice(0, -1));
-      if (!bb || !prevBB) continue;
-
-      const len = data.length;
-      const curr = data[len-1];
-      const prev = data[len-2];
-      const prev2 = data[len-3];
-
-      const currClose = parseFloat(curr[4]);
-      const prevClose = parseFloat(prev[4]);
-      const currVol = parseFloat(curr[5]);
-      const prevVol = parseFloat(prev[5]);
-      const currHigh = parseFloat(curr[2]);
-      const currLow = parseFloat(curr[3]);
-      const prevHigh = parseFloat(prev[2]);
-      const prevLow = parseFloat(prev[3]);
-      const prev2High = parseFloat(prev2[2]);
-      const prev2Low = parseFloat(prev2[3]);
-
-      const isGreen = currClose >= parseFloat(curr[1]);
-      const colorPrev = candleColor(prev);
-      const colorPrev2 = candleColor(curr);
-
-      // Conditions
-      if (currVol <= prevVol) continue; // skip if vol not increased
-
-      let cond2=false;
-      if (isGreen) {
-        cond2 = (currClose < bb.upper && prevHigh < prevBB.upper && prev2High < prevBB.upper);
-      } else {
-        cond2 = (currClose > bb.lower && prevLow > prevBB.lower && prev2Low > prevBB.lower);
-      }
-      if (!cond2) continue;
-
-      const closeChg = percentChange(currClose, prevClose).toFixed(2);
-      const volChg = percentChange(currVol, prevVol).toFixed(2);
-      const bbCheck = isGreen ? (currHigh < bb.upper ? "Yes" : "No") : (currLow > bb.lower ? "Yes" : "No");
-      const sameColor = (colorPrev === colorPrev2) ? "Yes" : "No";
-      const midBand = currClose > bb.middle ? "Above" : "Below";
-
-      results.push({
-        symbol: sym,
-        closeChg,
-        volChg,
-        bbCheck,
-        sameColor,
-        midBand
-      });
-
-    } catch (err) { console.log(sym, err.message); }
-  }
-
-  document.getElementById("progress").textContent = "Scan complete ✅";
-
-  for (let r of results) {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${r.symbol}</td>
-      <td class="${r.closeChg>=0?'green':'red'}">${r.closeChg}</td>
-      <td class="${r.volChg>=0?'green':'red'}">${r.volChg}</td>
-      <td>${r.bbCheck}</td>
-      <td>${r.sameColor}</td>
-      <td>${r.midBand}</td>
-    `;
-    tableBody.appendChild(tr);
-  }
-}
-
-// Sorting function
-function sortTable(colIndex) {
-  const table = document.getElementById('scannerTable');
-  const tbody = table.tBodies[0];
-  if (!tbody) return;
-
-  // Keep sort direction per column on the table element
-  table._sortDir = table._sortDir || {};
-  const key = 'col' + colIndex;
-  const dir = table._sortDir[key] === 'asc' ? 'desc' : 'asc';
-  table._sortDir[key] = dir;
-
-  // Get rows as array (only body rows)
-  const rows = Array.from(tbody.querySelectorAll('tr'));
-
-  rows.sort((rowA, rowB) => {
-    let a = (rowA.cells[colIndex] && rowA.cells[colIndex].innerText) ? rowA.cells[colIndex].innerText.trim() : '';
-    let b = (rowB.cells[colIndex] && rowB.cells[colIndex].innerText) ? rowB.cells[colIndex].innerText.trim() : '';
-
-    // Normalize numbers like "+1.23%", "1,234.56", "+3,456", etc.
-    const norm = s => s.replace(/[,%\+\s]/g, '');
-    const aNum = parseFloat(norm(a));
-    const bNum = parseFloat(norm(b));
-    const aIsNum = !Number.isNaN(aNum);
-    const bIsNum = !Number.isNaN(bNum);
-
-    let cmp = 0;
-    if (aIsNum && bIsNum) {
-      cmp = aNum - bNum;
-    } else {
-      // fallback to string compare (case-insensitive)
-      cmp = a.localeCompare(b, undefined, {sensitivity: 'base', numeric: true});
+        } catch (error) {
+            progressText.innerText = `Error: ${error.message}`;
+            console.error(error);
+        } finally {
+            startBtn.disabled = false;
+        }
     }
-    return dir === 'asc' ? cmp : -cmp;
-  });
 
-  // Re-attach rows in sorted order
-  rows.forEach(r => tbody.appendChild(r));
-}
+    async function scanSingleSymbol(symbol) {
+        try {
+            // Fetch the last 5 candles for safety, we only strictly need 3
+            const res = await fetch(`${API_BASE}/klines?symbol=${symbol}&interval=${TIMEFRAME}&limit=5`);
+            const klines = await res.json();
+            
+            if (klines.length < 3) return null;
+
+            // Extract the last 3 candles: [OpenTime, Open, High, Low, Close, Volume, ...]
+            const curr = klines[klines.length - 1];
+            const prev = klines[klines.length - 2];
+            const pp = klines[klines.length - 3]; // previous-previous
+
+            const curr_open = parseFloat(curr[1]), curr_close = parseFloat(curr[4]);
+            const prev_open = parseFloat(prev[1]), prev_close = parseFloat(prev[4]);
+            const pp_open = parseFloat(pp[1]), pp_close = parseFloat(pp[4]);
+
+            // Determine Colors (Green/Bullish = true, Red/Bearish = false)
+            const curr_is_green = curr_close >= curr_open;
+            const prev_is_green = prev_close >= prev_open;
+            const pp_is_green = pp_close >= pp_open;
+
+            // --- CONDITION 1: Current candle color MUST equal previous-previous color ---
+            if (curr_is_green !== pp_is_green) return null;
+
+            // --- CONDITION 2: Current candle color MUST differ from previous color ---
+            if (curr_is_green === prev_is_green) return null;
+
+            // Calculate percentage changes
+            const curr_chg = ((curr_close - curr_open) / curr_open) * 100;
+            const prev_chg = ((prev_close - prev_open) / prev_open) * 100;
+            const pp_chg = ((pp_close - pp_open) / pp_open) * 100;
+
+            return { symbol, curr_chg, prev_chg, pp_chg };
+
+        } catch (e) {
+            // Catch individual network fails silently so the batch survives
+            return null; 
+        }
+    }
+
+    function sortTable(column, forceRender = false) {
+        // Toggle sort direction if clicking the same column
+        if (!forceRender) {
+            if (currentSortColumn === column) {
+                isSortDescending = !isSortDescending;
+            } else {
+                currentSortColumn = column;
+                isSortDescending = true; // Default to descending on new column click
+            }
+        }
+
+        // Reset Icons
+        document.querySelectorAll('.sort-icon').forEach(icon => icon.innerText = '↕');
+        const activeIcon = document.getElementById(`icon_${column}`);
+        activeIcon.innerText = isSortDescending ? '↓' : '↑';
+
+        // Sort data array
+        scanResults.sort((a, b) => {
+            const valA = a[column];
+            const valB = b[column];
+            return isSortDescending ? valB - valA : valA - valB;
+        });
+
+        renderTable();
+    }
+
+    function renderTable() {
+        tableBody.innerHTML = '';
+        
+        if (scanResults.length === 0) {
+            tableBody.innerHTML = `<tr><td colspan="4" class="empty-state">No symbols match the condition right now.</td></tr>`;
+            return;
+        }
+
+        scanResults.forEach(row => {
+            const tr = document.createElement('tr');
+            
+            // Utility to format number and apply color class
+            const formatCell = (val) => {
+                const colorClass = val >= 0 ? 'green' : 'red';
+                const sign = val > 0 ? '+' : '';
+                return `<span class="${colorClass}">${sign}${val.toFixed(2)}%</span>`;
+            };
+
+            tr.innerHTML = `
+                <td><strong>${row.symbol}</strong></td>
+                <td>${formatCell(row.curr_chg)}</td>
+                <td>${formatCell(row.prev_chg)}</td>
+                <td>${formatCell(row.pp_chg)}</td>
+            `;
+            tableBody.appendChild(tr);
+        });
+    }
 </script>
 
 </body>
 </html>
-
-
